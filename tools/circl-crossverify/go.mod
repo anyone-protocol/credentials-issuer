@@ -1,4 +1,4 @@
-module github.com/anyone-protocol/credential-issuer/tools/circl-crossverify
+module github.com/anyone-protocol/credentials-issuer/tools/circl-crossverify
 
 go 1.25.0
 

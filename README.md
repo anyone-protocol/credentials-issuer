@@ -277,7 +277,7 @@ inside it.
 The Dockerfile builds from the **repository root**:
 
 ```sh
-docker build -f apps/backend/Dockerfile -t credential-issuer .
+docker build -f apps/backend/Dockerfile -t credentials-issuer .
 ```
 
 Base `oven/bun:1`, runs the TypeScript sources directly, listens on `$PORT` (default 3000),
@@ -291,8 +291,13 @@ healthcheck on `/healthz`.
   `crossverify` job that checks the published test vectors against CIRCL in Go
   ([docs/test-vectors.md](docs/test-vectors.md)).
 - Pushes to the default branch and `v*` tags additionally publish the image to the GitHub Container
-  Registry at `ghcr.io/anyone-protocol/credential-issuer`, tagged with the full commit SHA (what
+  Registry at `ghcr.io/anyone-protocol/credentials-issuer`, tagged with the full commit SHA (what
   Nomad job specs pin to), plus `latest` on the default branch and the semver version on `v*` tags.
+
+  The repository was renamed from `credential-issuer` on 2026-09-04, and the image path follows the
+  repository name. Images built before the rename are still at
+  `ghcr.io/anyone-protocol/credential-issuer` and were not copied over, so anything pinning a
+  pre-rename SHA must keep using the old path.
 
 Publishing authenticates with the built-in `GITHUB_TOKEN` — no repository secret to configure.
 

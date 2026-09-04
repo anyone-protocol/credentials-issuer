@@ -1,6 +1,6 @@
 # Issuer Service MVP — Scope & Deliverables
 
-**Repo:** `credential-issuer` · **Status:** Ready to build · **Built & operated by:** Anyone (Memetic Block eng) · **Consumed by:** TOON proxy (fronting), buyer clients/scripts, later the Anyone client wallet
+**Repo:** `credentials-issuer` · **Status:** Ready to build · **Built & operated by:** Anyone (Memetic Block eng) · **Consumed by:** TOON proxy (fronting), buyer clients/scripts, later the Anyone client wallet
 **Context:** Seeds the Sepolia integration sandbox. M0 unblocks TOON's connector/proxy/payout work immediately; M1 makes issuance real; M2 is internal-only and can lag.
 
 ## Invariants (agents: violating one of these fails the ticket, full stop)
