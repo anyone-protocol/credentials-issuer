@@ -1,13 +1,12 @@
 {
-  "name": "repository-template",
+  "name": "credential-issuer",
   "private": true,
   "workspaces": [
     "apps/*"
   ],
   "scripts": {
-    "dev:backend": "bun --watch apps/backend/src/main.ts",
-    "dev:frontend": "bun apps/frontend/build.ts --watch --serve",
-    "build:frontend": "bun apps/frontend/build.ts",
+    "dev": "bun --watch apps/backend/src/main.ts",
+    "start": "bun apps/backend/src/main.ts",
     "test": "bun test"
   },
   "devDependencies": {

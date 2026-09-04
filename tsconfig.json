@@ -1,12 +1,8 @@
 {
-  // Bun's runtime transpiler reads the tsconfig.json at the process cwd, so
-  // the jsx + decorator settings must also live here for commands run from
-  // the repository root (bun test, build scripts, docker CMDs).
+  // Bun reads the tsconfig.json at the process cwd, so these must be duplicated
+  // here for commands run from the repository root.
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "jsx": "react",
-    "jsxFactory": "h",
-    "jsxFragmentFactory": "Fragment",
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true
   }

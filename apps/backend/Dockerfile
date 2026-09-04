@@ -1,14 +1,10 @@
-# Build from the repository root:
-#   docker build -f apps/backend/Dockerfile .
-
 FROM docker.io/oven/bun:1
 WORKDIR /app
 ENV NODE_ENV=production
 
-# Workspace-aware install: every workspace package.json must be present.
+# Every workspace package.json must be present for a workspace-aware install.
 COPY package.json bun.lock ./
 COPY apps/backend/package.json ./apps/backend/
-COPY apps/frontend/package.json ./apps/frontend/
 RUN bun install --frozen-lockfile --production
 
 COPY tsconfig.json tsconfig.base.json ./

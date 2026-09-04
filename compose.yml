@@ -1,5 +1,4 @@
-# Local development backing services.
-# The apps themselves run on the host via bun (see README).
+# Local backing services. See README.
 services:
   redis:
     image: docker.io/library/redis:7-alpine
