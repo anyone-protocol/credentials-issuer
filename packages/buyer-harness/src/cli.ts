@@ -141,7 +141,7 @@ async function main(): Promise<number> {
     );
   } else {
     for (const check of result.conformance.checks) {
-      console.log(`${check.passed ? '✓' : '✗'} ${check.name}: ${check.detail}`);
+      console.log(`${check.passed ? 'PASS' : 'FAIL'}  ${check.name}: ${check.detail}`);
     }
     console.log(
       result.paymentFlow === '402-retry'

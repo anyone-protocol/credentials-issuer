@@ -16,12 +16,12 @@ bun run harness --url http://localhost:3000
 ```
 
 ```
-✓ key document fields: epoch 0
-✓ key document suite: RSABSSA-SHA384-PSS-Randomized
-✓ key document validity window: 2026-01-01T00:00:00.000Z to 2027-01-01T00:00:00.000Z
-✓ bundle count: 10 blobs, as configured
-✓ signature size: all 10 blobs are 256 bytes
-✓ epoch echoed: epoch 0
+PASS  key document fields: epoch 0
+PASS  key document suite: RSABSSA-SHA384-PSS-Randomized
+PASS  key document validity window: 2026-01-01T00:00:00.000Z to 2027-01-01T00:00:00.000Z
+PASS  bundle count: 10 blobs, as configured
+PASS  signature size: all 10 blobs are 256 bytes
+PASS  epoch echoed: epoch 0
 ```
 
 | Flag | Default | Meaning |

@@ -21,7 +21,7 @@ for (const milestone of milestones) {
   for (const { name } of scope.filter((s) => s.milestone === milestone)) {
     const hit = implemented.has(name);
     if (hit) covered += 1;
-    console.log(`  ${hit ? '✓' : '○'} ${name}`);
+    console.log(`  [${hit ? 'x' : ' '}] ${name}`);
   }
 }
 

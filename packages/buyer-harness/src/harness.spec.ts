@@ -62,10 +62,10 @@ describe('buyer harness CLI', () => {
       // "naming the size assertion that failed"
       expect(run.stderr).toContain('signature size');
       expect(run.stdout).toContain(
-        `✗ signature size: expected ${parameters.signatureSizeBytes} bytes: blob 3 decoded to ${parameters.signatureSizeBytes - 1} bytes`,
+        `FAIL  signature size: expected ${parameters.signatureSizeBytes} bytes: blob 3 decoded to ${parameters.signatureSizeBytes - 1} bytes`,
       );
       // The count assertion is unaffected, so the failure is specific.
-      expect(run.stdout).toContain('✓ bundle count');
+      expect(run.stdout).toContain('PASS  bundle count');
     } finally {
       fake.stop();
     }
