@@ -2,6 +2,8 @@ import { Body, Controller, Headers, Post } from '@nestjs/common';
 import { parsePaymentClaim, PAYMENT_CLAIM_HEADER } from '../payment/payment-claim';
 import { BundlesService, type BundleResponse } from './bundles.service';
 
+export const IDEMPOTENCY_KEY_HEADER = 'idempotency-key';
+
 @Controller('v1/bundles')
 export class BundlesController {
   constructor(private readonly bundles: BundlesService) {}
@@ -9,8 +11,9 @@ export class BundlesController {
   @Post()
   purchase(
     @Headers(PAYMENT_CLAIM_HEADER) claimHeader: string | undefined,
+    @Headers(IDEMPOTENCY_KEY_HEADER) idempotencyKey: string | undefined,
     @Body() body: unknown,
   ): Promise<BundleResponse> {
-    return this.bundles.purchase(parsePaymentClaim(claimHeader), body);
+    return this.bundles.purchase(parsePaymentClaim(claimHeader), idempotencyKey, body);
   }
 }

@@ -10,7 +10,7 @@ const SPEC_ROOT = join(REPO_ROOT, 'apps/backend/src');
  * same commit that lands it; until then its scenarios are reported but not
  * enforced, so unbuilt scope never blocks the build.
  */
-export const IMPLEMENTED_MILESTONES = new Set(['M0.1']);
+export const IMPLEMENTED_MILESTONES = new Set(['M0.1', 'M0.2']);
 
 export interface ScopeScenario {
   readonly milestone: string;

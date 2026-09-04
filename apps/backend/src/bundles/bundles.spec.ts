@@ -4,6 +4,7 @@ import {
   errorCode,
   postBundle,
   startIssuer,
+  uniquePaymentRef,
   validBlanks,
   type IssuerHarness,
 } from '../testing/issuer-harness';
@@ -18,16 +19,18 @@ describe('POST /v1/bundles', () => {
   });
   afterAll(() => harness.close());
   beforeEach(async () => {
-    await harness.dataSource.query('TRUNCATE TABLE issuance_record');
+    await harness.dataSource.query('TRUNCATE TABLE issuance_record, idempotency_record');
   });
 
   scenario('bundle purchase returns correctly sized blobs', async () => {
     const { config } = harness;
 
-    const response = await postBundle(harness, {
-      epoch: '0',
-      blinded_blanks: validBlanks(config),
-    });
+    const paymentRef = uniquePaymentRef();
+    const response = await postBundle(
+      harness,
+      { epoch: '0', blinded_blanks: validBlanks(config) },
+      { paymentRef },
+    );
 
     expect(response.status).toBe(201);
     const body = (await response.json()) as { epoch: string; blind_signatures: string[] };
@@ -49,7 +52,7 @@ describe('POST /v1/bundles', () => {
 
     const rows = await harness.dataSource.query('SELECT * FROM issuance_record');
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ payment_ref: 'pay-ref-1', epoch: '0', bundle_count: 1 });
+    expect(rows[0]).toMatchObject({ payment_ref: paymentRef, epoch: '0', bundle_count: 1 });
   });
 
   scenario('over-count bundle is rejected', async () => {
@@ -88,7 +91,7 @@ describe('POST /v1/bundles', () => {
     const response = await postBundle(
       harness,
       { epoch: '0', blinded_blanks: validBlanks(harness.config) },
-      null,
+      { paymentRef: null },
     );
 
     expect(response.status).toBe(402);

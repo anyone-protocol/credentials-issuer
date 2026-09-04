@@ -1,4 +1,5 @@
 import type { DataSourceOptions } from 'typeorm';
+import { IdempotencyRecord } from '../issuance/idempotency-record.entity';
 import { IssuanceRecord } from '../issuance/issuance-record.entity';
 
 // Shared by the running app (database.module.ts) and the migration CLI
@@ -11,7 +12,7 @@ export function buildDataSourceOptions(env = process.env): DataSourceOptions {
     username: env.POSTGRES_USER ?? 'app',
     password: env.POSTGRES_PASSWORD ?? 'app',
     database: env.POSTGRES_DB ?? 'app',
-    entities: [IssuanceRecord],
+    entities: [IssuanceRecord, IdempotencyRecord],
     migrations: [__dirname + '/migrations/*.{ts,js}'],
     synchronize: (env.DB_SYNCHRONIZE ?? String(env.NODE_ENV !== 'production')) === 'true',
   };

@@ -1,10 +1,10 @@
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../app.module';
-import { ISSUER_CONFIG, type IssuerConfig } from '../config/issuer.config';
+import { ISSUER_CONFIG, loadIssuerConfig, type IssuerConfig } from '../config/issuer.config';
 
 const REPO_ROOT = join(import.meta.dir, '../../../..');
 
@@ -15,11 +15,19 @@ export interface IssuerHarness {
   close(): Promise<void>;
 }
 
-export async function startIssuer(): Promise<IssuerHarness> {
+export async function startIssuer(
+  overrides: Partial<IssuerConfig> = {},
+): Promise<IssuerHarness> {
   // Resolved from the source tree so tests do not depend on the caller's cwd.
   process.env.KEY_DOCUMENT_PATH ??= join(REPO_ROOT, 'config/keys/current.json');
 
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+  // Overridden via DI rather than process.env, which would leak between the
+  // spec files bun runs in one process.
+  const builder = Test.createTestingModule({ imports: [AppModule] });
+  if (Object.keys(overrides).length > 0) {
+    builder.overrideProvider(ISSUER_CONFIG).useValue({ ...loadIssuerConfig(), ...overrides });
+  }
+  const moduleRef = await builder.compile();
   const app: INestApplication = moduleRef.createNestApplication();
   await app.listen(0);
 
@@ -42,16 +50,29 @@ export function claimHeader(paymentRef: string): string {
   return Buffer.from(JSON.stringify(claim), 'utf8').toString('base64url');
 }
 
+/** Fresh per call, so rate-limit budgets never carry between tests or runs. */
+export function uniquePaymentRef(): string {
+  return `pay-${randomUUID()}`;
+}
+
+export interface PostBundleOptions {
+  /** null omits the claim header entirely. Defaults to a fresh unique ref. */
+  readonly paymentRef?: string | null;
+  readonly idempotencyKey?: string;
+}
+
 export function postBundle(
   harness: IssuerHarness,
   body: unknown,
-  paymentRef: string | null = 'pay-ref-1',
+  options: PostBundleOptions = {},
 ): Promise<Response> {
+  const { paymentRef = uniquePaymentRef(), idempotencyKey } = options;
   return fetch(`${harness.url}/v1/bundles`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       ...(paymentRef === null ? {} : { 'x-payment-claim': claimHeader(paymentRef) }),
+      ...(idempotencyKey === undefined ? {} : { 'idempotency-key': idempotencyKey }),
     },
     body: JSON.stringify(body),
   });

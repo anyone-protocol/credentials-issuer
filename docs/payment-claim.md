@@ -38,7 +38,7 @@ from M0.2, the rate limiter.
 | Milestone | Checked |
 | --------- | ------- |
 | M0.1 (now) | Header present, decodes as base64url JSON, carries a non-empty `payment_ref`. |
-| M0.2 | Rate limit keyed by `payment_ref`, never by IP (I5). |
+| M0.2 | Rate limit keyed by `payment_ref`, never by IP (I5). Idempotency keys scoped per `payment_ref`. |
 | M1.4 | `proxy_sig` verifies, and `amount` matches the bundle price. |
 
 Until M1.4 the issuer trusts any well-formed claim. The stub is not an authorization boundary and
@@ -57,14 +57,16 @@ arriving without a claim means payment has not been established.
 
 ## Open questions for TOON
 
-1. **Claim freshness.** The payload has no timestamp or nonce, so a captured claim replays until
-   `payment_ref` is exhausted by idempotency (M0.2). Should the claim carry its own expiry?
+1. **Claim freshness.** The payload has no timestamp or nonce. M0.2 idempotency stops a *retry*
+   double-counting, but it does not stop a captured claim being reused for a genuinely new bundle:
+   nothing yet caps how many bundles one `payment_ref` may buy. That cap is the payment-side check
+   in M1.4. Should the claim also carry its own expiry, so a leaked claim ages out?
 2. **`proxy_sig` scope.** Does the signature cover the claim fields only, or also bind the request
    body (the blinded blanks)? Body-binding prevents a claim being re-pointed at a different bundle,
    at the cost of the proxy hashing a payload it otherwise ignores.
 3. **Key distribution.** How does the issuer learn the proxy's public key, and how is it rotated?
 4. **`amount` encoding.** Decimal string, or integer base units of $ANYONE? Base units avoid
    float-parsing disagreements at the price comparison in M1.4.
-5. **Error taxonomy.** M0.1 rejects a request whose envelope is malformed (missing `epoch`, body not
-   an object) with `REQUEST_INVALID`, a code the scope doc does not define. Confirm the name, or
-   tell us the code you want.
+5. **Error taxonomy.** Two codes are ours, not the scope doc's: `REQUEST_INVALID` (400) for a
+   malformed envelope, and `IDEMPOTENCY_CONFLICT` (409) for a key reused with a different body.
+   Confirm the names, or tell us the codes you want.

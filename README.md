@@ -12,17 +12,18 @@ non-negotiable.
 
 ## Status
 
-M0.1 complete: the API skeleton serves stub bundles and the static key document. Signatures are
-random blobs of the right size, not real blind signatures, and the payment claim is parsed but not
-verified. Do not expose this outside the sandbox.
+M0.1 and M0.2 complete: the API skeleton serves stub bundles and the static key document, with
+idempotency keys and per-`payment_ref` rate limiting. Signatures are deterministic filler of the
+right size, not real blind signatures, and the payment claim is parsed but not verified. Do not
+expose this outside the sandbox.
 
 | Endpoint | Milestone | State |
 | -------- | --------- | ----- |
 | `GET /healthz` | | live |
-| `POST /v1/bundles` | M0.1 | live, stub blobs (real signing lands in M1.1) |
+| `POST /v1/bundles` | M0.1, M0.2 | live, stub blobs (real signing lands in M1.1) |
 | `GET /v1/keys/current` | M0.1 | live, static file (Vault-backed epoch keys land in M1.2) |
 
-Next: M0.2 (idempotency keys, rate limiting per `payment_ref`).
+Next: M0.3 (sandbox deployment behind the TOON proxy) and M0.4 (buyer harness).
 
 ## API
 
@@ -30,6 +31,10 @@ Next: M0.2 (idempotency keys, rate limiting per `payment_ref`).
 
 Issues exactly `k` credentials per call at one price (I3). The proxy's forwarded proof of payment
 travels in the `X-Payment-Claim` header, specified in [docs/payment-claim.md](docs/payment-claim.md).
+
+An optional `Idempotency-Key` header makes the call safe to retry. A replay returns the same
+response and does not count the issuance twice; reusing a key for a *different* request is a
+`409 IDEMPOTENCY_CONFLICT` rather than a silent second issuance, which would be overissuance.
 
 ```sh
 curl -X POST localhost:3000/v1/bundles \
@@ -62,6 +67,8 @@ All errors return `{ "error": { "code": ..., "message": ... } }`.
 | `BUNDLE_SIZE` | 400 | `blinded_blanks` length is not `k`. |
 | `BLANK_FORMAT` | 400 | A blank is not base64, or does not decode to exactly the configured blank size. |
 | `CLAIM_INVALID` | 402 | Payment claim missing or malformed. |
+| `IDEMPOTENCY_CONFLICT` | 409 | `Idempotency-Key` reused for a different request. Not a scope-defined code. |
+| `RATE_LIMITED` | 429 | Too many requests for this `payment_ref`. |
 
 Count is checked before format, so a request that is both over-count and malformed reports
 `BUNDLE_SIZE`.
@@ -77,6 +84,8 @@ Count is checked before format, so a request that is both over-count and malform
 | `BLANK_SIZE_BYTES` | `256` | Expected decoded size of each blinded blank (RSA-2048). |
 | `SIGNATURE_SIZE_BYTES` | `256` | Size of each returned blob (RSA-2048). |
 | `KEY_DOCUMENT_PATH` | `config/keys/current.json` | Static key document to serve. |
+| `RATE_LIMIT_MAX` | `60` | Requests per window, per `payment_ref`. |
+| `RATE_LIMIT_WINDOW_SECONDS` | `60` | Rate limit window length. |
 
 ## Stack
 
@@ -110,7 +119,7 @@ curl localhost:3000/healthz
 ```
 
 Run the tests with `bun test` and the typecheck with `bunx tsc --noEmit`. The scenario tests boot
-the real app against Postgres, so bring the backing services up first. CI provides them as service
+the real app against Postgres and Redis, so bring the backing services up first. CI provides them as service
 containers.
 
 To run the service itself in a container alongside the backing services:
@@ -221,7 +230,7 @@ Publishing authenticates with the built-in `GITHUB_TOKEN` — no repository secr
     ├── bundles/                POST /v1/bundles, request validation
     ├── keys/                   GET /v1/keys/current, key document schema
     ├── issuance/               the I5 retention record, and nothing more
-    ├── payment/                payment claim parsing
+    ├── payment/                payment claim parsing, rate limiter
     ├── config/                 k and blob sizes
     ├── testing/                harness and the scope scenario coverage gate
     └── database/, queue/       Postgres and Redis wiring

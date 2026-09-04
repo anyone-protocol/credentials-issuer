@@ -4,13 +4,17 @@ export type IssuerErrorCode =
   | 'REQUEST_INVALID'
   | 'BUNDLE_SIZE'
   | 'BLANK_FORMAT'
-  | 'CLAIM_INVALID';
+  | 'CLAIM_INVALID'
+  | 'IDEMPOTENCY_CONFLICT'
+  | 'RATE_LIMITED';
 
 const STATUS: Record<IssuerErrorCode, HttpStatus> = {
   REQUEST_INVALID: HttpStatus.BAD_REQUEST,
   BUNDLE_SIZE: HttpStatus.BAD_REQUEST,
   BLANK_FORMAT: HttpStatus.BAD_REQUEST,
   CLAIM_INVALID: HttpStatus.PAYMENT_REQUIRED,
+  IDEMPOTENCY_CONFLICT: HttpStatus.CONFLICT,
+  RATE_LIMITED: HttpStatus.TOO_MANY_REQUESTS,
 };
 
 // Messages are written by hand and must never quote request payload bytes (I2).
