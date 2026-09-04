@@ -11,7 +11,8 @@
     "test": "bun test",
     "scenarios": "bun scripts/scenario-report.ts",
     "harness": "bun packages/buyer-harness/src/cli.ts",
-    "keys:dev": "bun scripts/generate-dev-keys.ts"
+    "keys:dev": "bun scripts/generate-dev-keys.ts",
+    "vectors:generate": "bun scripts/generate-test-vectors.ts"
   },
   "devDependencies": {
     "@cloudflare/blindrsa-ts": "^0.4.6",

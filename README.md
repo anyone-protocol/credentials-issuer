@@ -12,11 +12,11 @@ non-negotiable.
 
 ## Status
 
-M0.1, M0.2 and M0.4 complete, M1.1 half done. Issuance is **real**: the issuer blind-signs under an
-epoch RSA key with `@cloudflare/blindrsa-ts`, and the harness blinds, unblinds and verifies the
-result. Still missing: the payment claim is parsed but not verified (M1.4), epoch keys are files
-rather than Vault-managed and never rotate (M1.2), and the published test vectors are not written
-yet (M1.1). Do not expose this outside the sandbox.
+M0.1, M0.2, M0.4 and M1.1 complete. Issuance is **real**: the issuer blind-signs under an epoch RSA
+key with `@cloudflare/blindrsa-ts`, the harness blinds, unblinds and verifies, and the published
+test vectors cross-verify against CIRCL. Still missing: the payment claim is parsed but not
+verified (M1.4), and epoch keys are files rather than Vault-managed and never rotate (M1.2). Do not
+expose this outside the sandbox.
 
 | Endpoint | Milestone | State |
 | -------- | --------- | ----- |
@@ -24,7 +24,8 @@ yet (M1.1). Do not expose this outside the sandbox.
 | `POST /v1/bundles` | M0.1, M0.2, M1.1 | live, real RFC 9474 blind signatures |
 | `GET /v1/keys/current` | M0.1 | live, static file (Vault-backed epoch keys land in M1.2) |
 
-Next: M1.1's test vectors, then M0.3 (sandbox deployment behind the TOON proxy).
+Next: M1.2 (epoch key lifecycle in Vault), M1.4 (payment claim verification), and M0.3 (sandbox
+deployment behind the TOON proxy).
 
 ## API
 
@@ -238,7 +239,9 @@ healthcheck on `/healthz`.
 
 [.github/workflows/ci.yaml](.github/workflows/ci.yaml) runs on `ubuntu-latest`.
 
-- Every push and pull request: `bun install`, `bunx tsc --noEmit`, `bun test`.
+- Every push and pull request: `bun install`, `bunx tsc --noEmit`, `bun test`, and a separate
+  `crossverify` job that checks the published test vectors against CIRCL in Go
+  ([docs/test-vectors.md](docs/test-vectors.md)).
 - Pushes to the default branch and `v*` tags additionally publish the image to the GitHub Container
   Registry at `ghcr.io/anyone-protocol/credential-issuer`, tagged with the full commit SHA (what
   Nomad job specs pin to), plus `latest` on the default branch and the semver version on `v*` tags.
@@ -258,7 +261,10 @@ Publishing authenticates with the built-in `GITHUB_TOKEN` — no repository secr
 ├── docs/
 │   ├── issuer-mvp-scope.md     scope, invariants, BDD scenarios (spec of record)
 │   ├── payment-claim.md        proposed proxy claim interface, pending TOON
-│   └── buyer-harness.md        harness CLI, library API, conformance checks
+│   ├── buyer-harness.md        harness CLI, library API, conformance checks
+│   └── test-vectors.md         published RFC 9474 vectors and how they cross-verify
+├── test-vectors/               committed vectors, checked by both implementations
+├── tools/circl-crossverify/    Go cross-verifier (CIRCL), run as its own CI job
 ├── packages/buyer-harness/     headless buyer: library + CLI, TOON's conformance tool
 └── apps/backend/src/
     ├── bundles/                POST /v1/bundles, request validation
