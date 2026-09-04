@@ -13,7 +13,8 @@
     "harness": "bun packages/buyer-harness/src/cli.ts",
     "keys:dev": "bun scripts/generate-dev-keys.ts",
     "vectors:generate": "bun scripts/generate-test-vectors.ts",
-    "rotate-epoch": "bun scripts/rotate-epoch.ts"
+    "rotate-epoch": "bun scripts/rotate-epoch.ts",
+    "fake-proxy": "bun scripts/fake-proxy.ts"
   },
   "devDependencies": {
     "@cloudflare/blindrsa-ts": "^0.4.6",

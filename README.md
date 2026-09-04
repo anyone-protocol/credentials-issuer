@@ -32,7 +32,9 @@ sandbox.
 | `POST /v1/entitlements` | M2.1 | live, **mocked** receipt validation |
 | `POST /v1/entitlements/pickup` | M2.1, M2.2 | live, same signing path as a paid bundle |
 
-Next: M0.3 (sandbox deployment behind the TOON proxy).
+M0.3's artifacts are in place -- Nomad jobspecs, a manual deploy, and a dispatchable conformance
+run (see [docs/deployment.md](docs/deployment.md)). Its scenario is met only against the real TOON
+proxy on Sepolia, so it stays unchecked in `bun run scenarios` until that sandbox exists.
 
 ## API
 
@@ -453,6 +455,11 @@ healthcheck on `/healthz`.
 
 Publishing authenticates with the built-in `GITHUB_TOKEN` — no repository secret to configure.
 
+**Deploying is manual and separate.** A push publishes an image and stops; the stage Nomad job runs
+only when a `workflow_dispatch` ticks `deploy`, so merging never moves the sandbox on its own. The
+same dispatch takes a `conformance_url` to run the buyer harness against a deployed endpoint. See
+[docs/deployment.md](docs/deployment.md).
+
 ## Layout
 
 ```
@@ -463,10 +470,13 @@ Publishing authenticates with the built-in `GITHUB_TOKEN` — no repository secr
 ├── compose.published.yml       the above plus the published image, nothing built
 ├── config/keys/                epoch key + key document, gitignored, mounted at runtime
 ├── scripts/scenario-report.ts  scope scenario coverage by milestone
-├── .github/workflows/ci.yaml   test + publish image
+├── scripts/fake-proxy.ts       stands in for the TOON proxy to rehearse the 402 flow
+├── operations/                 Nomad jobspecs: issuer, postgres, redis (stage)
+├── .github/workflows/ci.yaml   test, publish image, manual deploy + conformance
 ├── docs/
 │   ├── issuer-mvp-scope.md     scope, invariants, BDD scenarios (spec of record)
 │   ├── toon-runbook.md         run it, drive a purchase, implement the proxy side
+│   ├── deployment.md           Nomad jobs, Vault secrets, deploying, the M0.3 conformance run
 │   ├── payment-claim.md        proposed proxy claim interface, pending TOON
 │   ├── buyer-harness.md        harness CLI, library API, conformance checks
 │   └── test-vectors.md         published RFC 9474 vectors and how they cross-verify

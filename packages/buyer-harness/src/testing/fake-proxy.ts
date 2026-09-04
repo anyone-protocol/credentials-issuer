@@ -8,6 +8,8 @@ export interface FakeProxyOptions {
   readonly signingKeyPem: string;
   readonly amount?: string;
   readonly routeId?: string;
+  /** Fixed port for a standalone rehearsal; 0 (the default) picks a free one. */
+  readonly port?: number;
 }
 
 export interface FakeProxy {
@@ -33,7 +35,7 @@ export function startFakeProxy(options: FakeProxyOptions): FakeProxy {
   const issuer = options.issuerUrl.replace(/\/+$/, '');
 
   const server = Bun.serve({
-    port: 0,
+    port: options.port ?? 0,
     async fetch(request) {
       const { pathname } = new URL(request.url);
       // Buffered so the body survives being forwarded after the paid retry.

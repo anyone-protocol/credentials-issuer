@@ -7,6 +7,15 @@ on:
   pull_request:
     branches: ["**"]
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Run the stage Nomad job after publishing (leave off to build only)'
+        type: boolean
+        default: false
+      conformance_url:
+        description: 'Run the buyer harness against this URL (the TOON proxy, for M0.3)'
+        type: string
+        default: ''
 
 env:
   REGISTRY: ghcr.io
@@ -103,3 +112,44 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  # Deploying is MANUAL. A push to the default branch publishes an image and stops there, so
+  # merging never moves the sandbox on its own; the jobspec is run against the SHA-tagged image
+  # only when someone ticks `deploy` on a workflow_dispatch.
+  deploy:
+    needs: [publish]
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Deploy to stage
+        env:
+          NOMAD_CACERT: operations/admin-ui-ca.crt
+          NOMAD_TOKEN: ${{ secrets.NOMAD_TOKEN_CREDENTIALS_ISSUER_DEPLOY }}
+          NOMAD_ADDR: ${{ secrets.NOMAD_ADDR }}
+        run: |
+          curl -L https://releases.hashicorp.com/nomad/1.10.2/nomad_1.10.2_linux_amd64.zip -o nomad.zip
+          unzip nomad.zip
+          # The jobspec pins a default commit_sha so it can be run by hand; pass the SHA that was
+          # just built rather than letting that default decide what deploys.
+          ./nomad job run -var="commit_sha=${GITHUB_SHA}" operations/credentials-issuer-stage.hcl
+
+  # M0.3's scenario: the buyer harness driving request -> 402 -> pay -> retry against a deployed
+  # issuer behind the TOON proxy. It needs a running sandbox, so it is dispatched with a URL
+  # rather than run on every push. See docs/deployment.md.
+  conformance:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.conformance_url != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Buy a bundle through the proxy
+        run: bun run harness --url "${{ inputs.conformance_url }}" --payment stub-receipt
