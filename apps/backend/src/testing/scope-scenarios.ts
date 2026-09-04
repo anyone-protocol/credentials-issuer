@@ -12,6 +12,19 @@ const SPEC_ROOTS = [join(REPO_ROOT, 'apps/backend/src'), join(REPO_ROOT, 'packag
  */
 export const IMPLEMENTED_MILESTONES = new Set(['M0.1', 'M0.2', 'M0.4', 'M1.1', 'M1.2', 'M1.3', 'M1.4', 'M2.1', 'M2.2']);
 
+/**
+ * Milestones verified by hand, not by `bun test`. Their scenarios need
+ * something no test process can stand up, so an automated check would be a
+ * mock of the thing under test rather than the thing itself.
+ *
+ * They are not a backlog: the code is complete and the verification is
+ * documented. Listing one here says so, and keeps the coverage report from
+ * carrying a gap that will never close.
+ */
+export const MANUAL_MILESTONES = new Map([
+  ['M0.3', 'needs the sandbox deployed behind the TOON proxy; see docs/deployment.md'],
+]);
+
 export interface ScopeScenario {
   readonly milestone: string;
   readonly name: string;

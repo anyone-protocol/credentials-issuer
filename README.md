@@ -12,7 +12,7 @@ non-negotiable.
 
 ## Status
 
-Everything except M0.3 is complete: M0.1, M0.2, M0.4, all of M1, and M2. Issuance is **real**: the
+**Code complete against the MVP scope**, M0.1 through M2. Issuance is **real**: the
 issuer blind-signs under an epoch RSA key with `@cloudflare/blindrsa-ts`, the harness blinds,
 unblinds and verifies, the published test vectors cross-verify against CIRCL, and the proxy's
 payment claim must carry a valid `proxy_sig` and the right amount. Per-epoch counters reconcile on
@@ -32,9 +32,11 @@ sandbox.
 | `POST /v1/entitlements` | M2.1 | live, **mocked** receipt validation |
 | `POST /v1/entitlements/pickup` | M2.1, M2.2 | live, same signing path as a paid bundle |
 
-M0.3's artifacts are in place -- Nomad jobspecs, a manual deploy, and a dispatchable conformance
-run (see [docs/deployment.md](docs/deployment.md)). Its scenario is met only against the real TOON
-proxy on Sepolia, so it stays unchecked in `bun run scenarios` until that sandbox exists.
+M0.3 ships its artifacts -- Nomad jobspecs, a manual deploy, and a dispatchable conformance run
+(see [docs/deployment.md](docs/deployment.md)). Its one scenario is **verified by hand**: it needs a
+sandbox deployed behind the TOON proxy, which no test process can stand up, so automating it would
+mock the thing under test. `bun run scenarios` marks it `[-]` and counts it separately rather than
+carrying a gap that will never close.
 
 ## API
 
@@ -238,12 +240,22 @@ any of:
 - a `scenario()` name that does not appear in the scope doc verbatim (a rename, a typo, or a
   scenario invented in code, which the working method forbids),
 - a scope doc that stops parsing into attributed scenarios, so the two checks above cannot pass
-  vacuously.
+  vacuously,
+- a milestone marked both enforced and manual, or exempted without a reason naming where its
+  verification is written down.
 
 Which milestones are enforced is one line, `IMPLEMENTED_MILESTONES` in
 [scope-scenarios.ts](apps/backend/src/testing/scope-scenarios.ts). Flip a milestone on in the
 commit that lands it. Until then its scenarios show in the report but do not block CI, so unbuilt
 scope never fails the build.
+
+**Manual milestones.** A scenario that needs something no test process can stand up -- a deployed
+sandbox, a counterparty's service -- is listed in `MANUAL_MILESTONES` with the doc that says how it
+is verified. Automating one would mock the thing under test, and leaving it unchecked would leave
+the report carrying a gap that never closes, so the report scores it separately: `[-]`, counted as
+verified by hand rather than as missing. The exemption is narrow by construction: the milestone
+must exist in the scope doc, must not also be enforced, and must name a `docs/` page. M0.3 is the
+only one.
 
 ```sh
 bun run scenarios      # coverage by milestone; also a CI step
