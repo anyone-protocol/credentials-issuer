@@ -293,7 +293,10 @@ once: the loser re-reads a schedule that is no longer due and rolls back. Duenes
 database clock, never the application's.
 
 **Missed drips do not accumulate.** The next drip falls an interval from *now*, not from when this
-one came due, so a long-idle subscriber cannot pick up a burst of bundles at once.
+one came due, so a long-idle subscriber cannot pick up a burst of bundles at once. This is settled,
+not provisional: it matches how a subscription behaves, and a period you did not collect is a
+period you did not use. Revisit it only if the credential is commercialized as prepaid volume
+rather than as a subscription.
 
 **A retry is not an early pickup.** A client that never saw its response can retry with the same
 `Idempotency-Key` and get its credentials back rather than `NOT_DUE`; the schedule still advances
@@ -316,8 +319,6 @@ The scenarios are the definition of done, so these were left unbuilt rather than
 - **Termination.** Nothing ends an entitlement. A cancelled or refunded subscription drips
   forever, which is a free class I6 forbids. Needs an expiry on the schedule, and something
   authoritative to set it.
-- **Catch-up.** Missed drips are currently forfeited. The alternative, letting them accumulate,
-  gives the subscriber what they paid for but allows a burst.
 - **Pickup authentication.** The bare entitlement id authorizes issuance. A signed proof would
   survive a leaked id; a bearer token does not.
 
