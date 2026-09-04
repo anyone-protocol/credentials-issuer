@@ -21,6 +21,37 @@ async function aBlank(): Promise<string> {
   return prepared.blindedBlanks[0]!;
 }
 
+describe('SignerPool inline mode', () => {
+  it('signs without starting any worker threads, identically to the pool', async () => {
+    const blank = await aBlank();
+
+    const inline = await poolWith({ signingWorkers: 0 });
+    await inline.onModuleInit();
+    const viaInline = await inline.sign(blank);
+    // Nothing spawned: SIGNING_WORKERS=0 must mean no worker_threads at all.
+    expect((inline as unknown as { slots: unknown[] }).slots).toHaveLength(0);
+    await inline.onModuleDestroy();
+
+    const pooled = await poolWith({ signingWorkers: 2 });
+    const viaPool = await pooled.sign(blank);
+    await pooled.onModuleDestroy();
+
+    // BlindSign is deterministic, so the two modes are interchangeable.
+    expect(viaInline).toBe(viaPool);
+  }, 30_000);
+
+  it('still rejects an invalid blank in inline mode', async () => {
+    const inline = await poolWith({ signingWorkers: 0 });
+    await inline.onModuleInit();
+
+    await expect(
+      inline.sign(Buffer.alloc(256, 0xff).toString('base64')),
+    ).rejects.toThrow(/out of range/i);
+
+    await inline.onModuleDestroy();
+  }, 20_000);
+});
+
 describe('SignerPool resilience', () => {
   it('keeps serving after a worker dies', async () => {
     const pool = await poolWith();

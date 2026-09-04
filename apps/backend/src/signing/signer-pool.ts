@@ -1,9 +1,11 @@
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Worker } from 'node:worker_threads';
 import { ISSUER_CONFIG, type IssuerConfig } from '../config/issuer.config';
+import { importPrivateKey } from '../keys/epoch-key';
 import { KeysService } from '../keys/keys.service';
 import type { SignReply } from './blind-sign.worker';
-import { selectSigningSuite } from './suite';
+import { base64ToBytes, bytesToBase64 } from '../keys/bytes';
+import { selectSigningSuite, type SuiteSelection } from './suite';
 
 const WORKER_URL = new URL('./blind-sign.worker.ts', import.meta.url);
 
@@ -37,6 +39,8 @@ export class SignerPool implements OnModuleInit, OnModuleDestroy {
   private readonly idle: Slot[] = [];
   private readonly waiting: ((slot: Slot) => void)[] = [];
   private started?: Promise<void>;
+  private selection?: SuiteSelection;
+  private inlineKey?: Promise<CryptoKey>;
   private shuttingDown = false;
   private nextId = 0;
 
@@ -51,15 +55,36 @@ export class SignerPool implements OnModuleInit, OnModuleDestroy {
    * their own realm.
    */
   async onModuleInit(): Promise<void> {
-    const { fastPath, reason } = await selectSigningSuite(this.config.useNativeRsa);
+    this.selection = await selectSigningSuite(this.config.useNativeRsa);
+    const { fastPath, reason } = this.selection;
+    const where = this.inlineMode
+      ? 'inline on the main thread'
+      : `on ${this.config.signingWorkers} worker thread(s)`;
+
     if (fastPath) {
-      this.logger.log(`blind signing via the RSA-RAW fast path (${reason})`);
+      this.logger.log(`blind signing ${where}, RSA-RAW fast path (${reason})`);
     } else {
-      this.logger.warn(`blind signing via the pure-JS path, ~280ms per signature: ${reason}`);
+      this.logger.warn(`blind signing ${where}, pure-JS path at ~280ms per signature: ${reason}`);
+    }
+
+    // The one combination that stalls the process: no workers to absorb it and
+    // no fast path to make it cheap.
+    if (this.inlineMode && !fastPath) {
+      this.logger.warn(
+        'SIGNING_WORKERS=0 with the pure-JS path blocks the event loop for seconds per bundle; ' +
+          'set SIGNING_WORKERS to 1 or more, or leave SIGNING_NATIVE_RSA on',
+      );
     }
   }
 
+  /** Signing runs on the caller's thread; no worker_threads are used at all. */
+  private get inlineMode(): boolean {
+    return this.config.signingWorkers === 0;
+  }
+
   async sign(blindedBlank: string): Promise<string> {
+    if (this.inlineMode) return this.signInline(blindedBlank);
+
     await this.ensureStarted();
     const slot = await this.acquire();
     const id = this.nextId++;
@@ -81,6 +106,23 @@ export class SignerPool implements OnModuleInit, OnModuleDestroy {
       clearTimeout(timer);
       if (slot.alive) this.release(slot);
     }
+  }
+
+  /**
+   * No timeout here: the work is synchronous CPU on this thread, so there is
+   * nothing a timer could interrupt. That is the trade for having no threads.
+   */
+  private async signInline(blindedBlank: string): Promise<string> {
+    if (!this.selection) throw new Error('signing suite not selected');
+    // Imported from the PEM, exactly as a worker does, so the pool depends on
+    // one thing from KeysService whichever mode it runs in.
+    this.inlineKey ??= importPrivateKey(this.keys.epochSigningKeyPem());
+
+    const signature = await this.selection.suite.blindSign(
+      await this.inlineKey,
+      base64ToBytes(blindedBlank),
+    );
+    return bytesToBase64(signature);
   }
 
   async onModuleDestroy(): Promise<void> {

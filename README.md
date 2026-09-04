@@ -122,7 +122,7 @@ could not happen at all. Full flag list, library API and the M1.1 upgrade path a
 | `PROXY_PUBLIC_KEY_PATH` | `config/keys/proxy.pub.pem` | Proxy's Ed25519 public key, SPKI PEM. |
 | `BUNDLE_PRICE` | `1.00` | Price of one bundle, exact decimal. |
 | `RECONCILIATION_INTERVAL_SECONDS` | `60` | How often the reconciliation cycle runs. |
-| `SIGNING_WORKERS` | `4` | Blind-signing worker threads. Match the CPU allocation. |
+| `SIGNING_WORKERS` | `4` | Blind-signing worker threads. `0` signs inline, starting no threads. |
 | `SIGNING_NATIVE_RSA` | `true` | Use the RSA-RAW fast path. `false` forces the pure-JS path. |
 | `SIGNING_TIMEOUT_MS` | `10000` | Bounds one signing task. Raise it if forcing the pure-JS path. |
 | `RATE_LIMIT_MAX` | `60` | Requests per sliding window, per `payment_ref`. |
@@ -264,8 +264,26 @@ conditions this meets. The risk is contained rather than assumed away:
 - **CI cross-verifies against CIRCL in Go**, so a wrong fast path fails the build.
 - **Both paths fail identically** on an invalid blank, pinned by a test.
 
-Set `SIGNING_NATIVE_RSA=false` to force the pure-JS path. Set `SIGNING_WORKERS` to match the
-deployment's CPU allocation; each worker holds its own copy of the epoch key.
+### Single-thread mode
+
+`SIGNING_WORKERS=0` signs inline on the main thread and starts no `worker_threads` at all. With the
+fast path a `k=10` bundle is only a few milliseconds of work, so this is a perfectly usable mode and
+the simplest thing to debug or run somewhere threads are awkward:
+
+| `SIGNING_WORKERS` | Throughput | Bundle latency | `/healthz` under load |
+| --- | --- | --- | --- |
+| `0` (inline) | ~1000 sig/sec | 63–77 ms | 17 ms median |
+| `4` (pool) | ~2600 sig/sec | 13–31 ms | 3.5 ms median |
+
+Both modes produce identical signatures, pinned by a test: `BlindSign` is deterministic, so they are
+interchangeable and you can switch without anything downstream noticing.
+
+The one combination to avoid is `SIGNING_WORKERS=0` **with** `SIGNING_NATIVE_RSA=false`: no threads
+to absorb the work and no fast path to make it cheap means seconds of blocked event loop per bundle.
+Boot warns if you do it.
+
+Otherwise set `SIGNING_NATIVE_RSA=false` to force the pure-JS path, and `SIGNING_WORKERS` to match
+the deployment's CPU allocation; each worker holds its own copy of the epoch key.
 
 The pool also has to survive its workers. Every task is bounded by
 `SIGNING_TIMEOUT_MS`, and a worker that dies or misses its deadline is terminated and replaced
