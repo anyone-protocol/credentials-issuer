@@ -159,8 +159,10 @@ could not happen at all. Full flag list, library API and the M1.1 upgrade path a
 
 ## Configuration
 
-`k` and the blob sizes are provisional and bind in config until the 0.3 credential spec lands
-(scope: "Inputs needed before M1 starts").
+`k`, the blob sizes and the epoch length are **placeholders**, not decisions. There is no external
+spec to wait for; they are five open questions written up in
+[docs/credential-parameters.md](docs/credential-parameters.md), each with what depends on it and
+what it costs to change once someone has built against it.
 
 | Variable | Default | Meaning |
 | -------- | ------- | ------- |
@@ -489,6 +491,7 @@ same dispatch takes a `conformance_url` to run the buyer harness against a deplo
 │   ├── issuer-mvp-scope.md     scope, invariants, BDD scenarios (spec of record)
 │   ├── toon-runbook.md         run it, drive a purchase, implement the proxy side
 │   ├── deployment.md           Nomad jobs, Vault secrets, deploying, the M0.3 conformance run
+│   ├── credential-parameters.md  k, epoch length, serial and schema: decisions still open
 │   ├── payment-claim.md        proposed proxy claim interface, pending TOON
 │   ├── buyer-harness.md        harness CLI, library API, conformance checks
 │   └── test-vectors.md         published RFC 9474 vectors and how they cross-verify
