@@ -12,20 +12,27 @@ non-negotiable.
 
 ## Status
 
-M0.1, M0.2, M0.4 and all of M1 complete. Issuance is **real**: the issuer blind-signs under an
-epoch RSA key with `@cloudflare/blindrsa-ts`, the harness blinds, unblinds and verifies, the
-published test vectors cross-verify against CIRCL, and the proxy's payment claim must carry a valid
-`proxy_sig` and the right amount. Per-epoch counters reconcile on a schedule and raise an alarm on divergence. Epoch keys rotate with a grace window and no restart. Still missing: **a valid claim can be
-replayed for more bundles** (see [docs/payment-claim.md](docs/payment-claim.md)). Do not expose
-this outside the sandbox.
+Everything except M0.3 is complete: M0.1, M0.2, M0.4, all of M1, and M2. Issuance is **real**: the
+issuer blind-signs under an epoch RSA key with `@cloudflare/blindrsa-ts`, the harness blinds,
+unblinds and verifies, the published test vectors cross-verify against CIRCL, and the proxy's
+payment claim must carry a valid `proxy_sig` and the right amount. Per-epoch counters reconcile on
+a schedule and raise an alarm on divergence. Epoch keys rotate with a grace window and no restart.
+Both payment rails, crypto and fiat, issue through one code path.
+
+Still missing: **a valid claim can be replayed for more bundles** (see
+[docs/payment-claim.md](docs/payment-claim.md)), and **receipt validation is a stub that accepts
+anything** (see [the fiat rail](#the-fiat-rail-entitlement-drip)). Do not expose this outside the
+sandbox.
 
 | Endpoint | Milestone | State |
 | -------- | --------- | ----- |
 | `GET /healthz` | | live |
 | `POST /v1/bundles` | M0.1, M0.2, M1.1 | live, real RFC 9474 blind signatures |
-| `GET /v1/keys/current` | M0.1 | live, static file (Vault-backed epoch keys land in M1.2) |
+| `GET /v1/keys/current` | M0.1, M1.2 | live, from the Vault-rendered keyring |
+| `POST /v1/entitlements` | M2.1 | live, **mocked** receipt validation |
+| `POST /v1/entitlements/pickup` | M2.1, M2.2 | live, same signing path as a paid bundle |
 
-Next: M0.3 (sandbox deployment behind the TOON proxy), then M2.
+Next: M0.3 (sandbox deployment behind the TOON proxy).
 
 ## API
 
@@ -49,6 +56,28 @@ Response is `{ "epoch": "0", "blind_signatures": [ ... k base64 strings ... ] }`
 
 Blanks are measured and discarded. Per invariant I2 the issuer never parses, logs or stores blank
 or signature bytes beyond validating their count and length.
+
+### `POST /v1/entitlements`
+
+Registers a fiat subscription and returns `{entitlement_id, next_drip_at}`. The first drip is due
+immediately, since the subscriber has already paid.
+
+Registration is idempotent in the receipt: presenting the same receipt twice returns the same
+entitlement. A second entitlement from one receipt would be a drip schedule nobody paid for, which
+is the free class I6 forbids.
+
+```sh
+curl -X POST localhost:3000/v1/entitlements \
+  -H "content-type: application/json" -d '{"receipt":"..."}'
+```
+
+### `POST /v1/entitlements/pickup`
+
+Collects one due drip. The entitlement id travels in the `X-Entitlement` header; the body, the
+response and the `Idempotency-Key` handling are **identical** to `POST /v1/bundles`. See
+[the fiat rail](#the-fiat-rail-entitlement-drip).
+
+An early pickup is a `409 NOT_DUE` and never reaches the signer.
 
 ### `GET /v1/keys/current`
 
@@ -142,6 +171,7 @@ could not happen at all. Full flag list, library API and the M1.1 upgrade path a
 | `SIGNING_WORKERS` | `4` | Blind-signing worker threads. `0` signs inline, starting no threads. |
 | `SIGNING_NATIVE_RSA` | `true` | Use the RSA-RAW fast path. `false` forces the pure-JS path. |
 | `SIGNING_TIMEOUT_MS` | `10000` | Bounds one signing task. Raise it if forcing the pure-JS path. |
+| `ENTITLEMENT_DRIP_INTERVAL_SECONDS` | `86400` | How often a fiat entitlement becomes due for one bundle. |
 | `RATE_LIMIT_MAX` | `60` | Requests per sliding window, per `payment_ref`. |
 | `RATE_LIMIT_WINDOW_SECONDS` | `60` | Sliding window length. |
 
@@ -242,6 +272,54 @@ leave a counter behind.
 
 `bundle_size` is recorded per epoch, so changing `k` later cannot retroactively make a settled
 epoch look diverged.
+
+## The fiat rail (entitlement drip)
+
+M2 adds a second way to be authorized for a bundle, not a second way to issue one. A fiat
+subscription buys a **drip schedule**: `{entitlement_id -> next_drip_at}`, due for exactly one
+bundle each interval. When a drip is due, the pickup runs the same `IssuanceService` a paid
+purchase runs, so it produces the same blind signatures under the same epoch key, writes the same
+ledger row, and moves the same epoch counters. Reconciliation counts a drip as a paid bundle,
+because it is one (I6).
+
+That sharing is the point of M2.2. If the two rails had their own signing paths, fiat and crypto
+credentials would form separate anonymity sets and a redeeming exit could tell which rail a
+credential came from. `convergence.spec.ts` compares the two responses field by field, including
+status code and media type, and verifies credentials from both rails under one public key.
+
+**Claiming a drip is atomic.** The schedule is advanced by a conditional `UPDATE ... WHERE
+next_drip_at <= now()` inside the issuance transaction, so two pickups racing for one drip issue
+once: the loser re-reads a schedule that is no longer due and rolls back. Dueness is read from the
+database clock, never the application's.
+
+**Missed drips do not accumulate.** The next drip falls an interval from *now*, not from when this
+one came due, so a long-idle subscriber cannot pick up a burst of bundles at once.
+
+**A retry is not an early pickup.** A client that never saw its response can retry with the same
+`Idempotency-Key` and get its credentials back rather than `NOT_DUE`; the schedule still advances
+exactly once, because the issuance transaction aborts on the claimed key before the advance runs.
+
+### What is stubbed, and what that costs
+
+`ReceiptValidator` accepts **any non-empty string** and treats it as its own subscription id. Real
+App Store / Play verification is out of scope (M2.1), so on this rail anyone can mint an
+entitlement and drip credentials forever without paying. Replacing it is a prerequisite for
+running the fiat rail anywhere real, sandbox included.
+
+Entitlement ids are server-generated UUIDs rather than client-chosen, so they cannot be enumerated
+into someone else's drip, but they are bearer tokens: whoever holds one collects the drips.
+
+### Open questions for the scope author
+
+The scenarios are the definition of done, so these were left unbuilt rather than decided here:
+
+- **Termination.** Nothing ends an entitlement. A cancelled or refunded subscription drips
+  forever, which is a free class I6 forbids. Needs an expiry on the schedule, and something
+  authoritative to set it.
+- **Catch-up.** Missed drips are currently forfeited. The alternative, letting them accumulate,
+  gives the subscriber what they paid for but allows a burst.
+- **Pickup authentication.** The bare entitlement id authorizes issuance. A signed proof would
+  survive a leaked id; a bearer token does not.
 
 ## Performance: the RSA-RAW fast path
 
@@ -395,9 +473,10 @@ Publishing authenticates with the built-in `GITHUB_TOKEN` — no repository secr
 ├── tools/circl-crossverify/    Go cross-verifier (CIRCL), run as its own CI job
 ├── packages/buyer-harness/     headless buyer: library + CLI, TOON's conformance tool
 └── apps/backend/src/
-    ├── bundles/                POST /v1/bundles, request validation
+    ├── bundles/                POST /v1/bundles: the crypto rail's admission
+    ├── entitlements/           POST /v1/entitlements: the fiat rail's drip schedule
     ├── keys/                   GET /v1/keys/current, key document schema
-    ├── issuance/               the I5 retention record, and nothing more
+    ├── issuance/               the one signing path both rails share, and the I5 record
     ├── payment/                claim parsing and verification, rate limiter
     ├── accounting/             epoch counters, reconciliation job, alarms
     ├── config/                 k and blob sizes

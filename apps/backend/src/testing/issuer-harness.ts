@@ -9,7 +9,7 @@ import {
   importProxySigningKey,
   signPaymentClaim,
 } from '../../../../packages/buyer-harness/src/claim';
-import { RsaBlinder } from '../../../../packages/buyer-harness/src/blinding';
+import { RsaBlinder, type PreparedBundle } from '../../../../packages/buyer-harness/src/blinding';
 import { AppModule } from '../app.module';
 import { ISSUER_CONFIG, loadIssuerConfig, type IssuerConfig } from '../config/issuer.config';
 import type { KeyDocument } from '../keys/key-document';
@@ -73,8 +73,15 @@ export async function validBlanks(
   harness: IssuerHarness,
   count = harness.config.bundleSize,
 ): Promise<string[]> {
-  const prepared = await new RsaBlinder().prepare(count, harness.keyDocument.pubkey);
-  return [...prepared.blindedBlanks];
+  return [...(await prepareBundle(harness, count)).blindedBlanks];
+}
+
+/** Keeps the blinding state, so the caller can finalize and verify (M1.1, M2.2). */
+export function prepareBundle(
+  harness: IssuerHarness,
+  count = harness.config.bundleSize,
+): Promise<PreparedBundle> {
+  return new RsaBlinder().prepare(count, harness.keyDocument.pubkey);
 }
 
 /**
@@ -137,6 +144,41 @@ export async function postBundle(
       'content-type': 'application/json',
       ...(header === null ? {} : { 'x-payment-claim': header }),
       ...(idempotencyKey === undefined ? {} : { 'idempotency-key': idempotencyKey }),
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+/** A fresh entitlement, due for its first drip immediately (M2.1). */
+export async function registerEntitlement(
+  harness: IssuerHarness,
+  receipt = `receipt-${randomUUID()}`,
+): Promise<{ entitlement_id: string; next_drip_at: string }> {
+  const response = await fetch(`${harness.url}/v1/entitlements`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ receipt }),
+  });
+  if (response.status !== 201) {
+    throw new Error(`entitlement registration failed: ${response.status} ${await response.text()}`);
+  }
+  return (await response.json()) as { entitlement_id: string; next_drip_at: string };
+}
+
+export function postPickup(
+  harness: IssuerHarness,
+  entitlementId: string | null,
+  body: unknown,
+  options: { idempotencyKey?: string } = {},
+): Promise<Response> {
+  return fetch(`${harness.url}/v1/entitlements/pickup`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(entitlementId === null ? {} : { 'x-entitlement': entitlementId }),
+      ...(options.idempotencyKey === undefined
+        ? {}
+        : { 'idempotency-key': options.idempotencyKey }),
     },
     body: JSON.stringify(body),
   });

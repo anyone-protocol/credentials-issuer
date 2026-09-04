@@ -4,6 +4,7 @@ import { AccountingModule } from './accounting/accounting.module';
 import { BundlesModule } from './bundles/bundles.module';
 import { IssuerConfigModule } from './config/issuer-config.module';
 import { DatabaseModule } from './database/database.module';
+import { EntitlementsModule } from './entitlements/entitlements.module';
 import { HealthController } from './health/health.controller';
 import { KeysModule } from './keys/keys.module';
 import { QueueModule } from './queue/queue.module';
@@ -17,6 +18,7 @@ import { QueueModule } from './queue/queue.module';
     KeysModule,
     AccountingModule,
     BundlesModule,
+    EntitlementsModule,
   ],
   controllers: [HealthController],
 })

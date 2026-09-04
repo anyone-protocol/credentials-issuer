@@ -1,8 +1,9 @@
 import { Body, Controller, Headers, Post } from '@nestjs/common';
+import { IDEMPOTENCY_KEY_HEADER } from '../issuance/headers';
 import { PAYMENT_CLAIM_HEADER } from '../payment/payment-claim';
 import { BundlesService, type BundleResponse } from './bundles.service';
 
-export const IDEMPOTENCY_KEY_HEADER = 'idempotency-key';
+export { IDEMPOTENCY_KEY_HEADER };
 
 @Controller('v1/bundles')
 export class BundlesController {

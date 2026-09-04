@@ -22,6 +22,8 @@ export interface IssuerConfig {
   readonly useNativeRsa: boolean;
   /** Bounds one signing task, so a wedged worker cannot strand a request. */
   readonly signingTimeoutMs: number;
+  /** How often a fiat entitlement becomes due for one bundle (M2.1). */
+  readonly entitlementDripIntervalSeconds: number;
 }
 
 function nonNegativeInt(value: string | undefined, fallback: number, name: string): number {
@@ -61,5 +63,10 @@ export function loadIssuerConfig(env: NodeJS.ProcessEnv = process.env): IssuerCo
     signingWorkers: nonNegativeInt(env.SIGNING_WORKERS, 4, 'SIGNING_WORKERS'),
     useNativeRsa: (env.SIGNING_NATIVE_RSA ?? 'true') !== 'false',
     signingTimeoutMs: positiveInt(env.SIGNING_TIMEOUT_MS, 10_000, 'SIGNING_TIMEOUT_MS'),
+    entitlementDripIntervalSeconds: positiveInt(
+      env.ENTITLEMENT_DRIP_INTERVAL_SECONDS,
+      86_400,
+      'ENTITLEMENT_DRIP_INTERVAL_SECONDS',
+    ),
   };
 }

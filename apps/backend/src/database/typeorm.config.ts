@@ -1,6 +1,7 @@
 import type { DataSourceOptions } from 'typeorm';
 import { EpochCounter } from '../accounting/epoch-counter.entity';
 import { ReconciliationAlarm } from '../accounting/reconciliation-alarm.entity';
+import { Entitlement } from '../entitlements/entitlement.entity';
 import { ClaimRejection } from '../issuance/claim-rejection.entity';
 import { IdempotencyRecord } from '../issuance/idempotency-record.entity';
 import { IssuanceRecord } from '../issuance/issuance-record.entity';
@@ -15,7 +16,7 @@ export function buildDataSourceOptions(env = process.env): DataSourceOptions {
     username: env.POSTGRES_USER ?? 'app',
     password: env.POSTGRES_PASSWORD ?? 'app',
     database: env.POSTGRES_DB ?? 'app',
-    entities: [IssuanceRecord, IdempotencyRecord, ClaimRejection, EpochCounter, ReconciliationAlarm],
+    entities: [IssuanceRecord, IdempotencyRecord, ClaimRejection, EpochCounter, ReconciliationAlarm, Entitlement],
     migrations: [__dirname + '/migrations/*.{ts,js}'],
     synchronize: (env.DB_SYNCHRONIZE ?? String(env.NODE_ENV !== 'production')) === 'true',
   };
