@@ -1,7 +1,16 @@
 export { RsaBlinder } from './blinding';
 export type { Blinder, IssuedCredential, PreparedBundle } from './blinding';
 export { encodePaymentClaim, IssuerClient, IssuerRequestError } from './client';
-export type { IssuerClientOptions } from './client';
+export type { IssuerClientOptions, PaymentFlow } from './client';
+export {
+  NoPaymentProvider,
+  PAYMENT_RECEIPT_HEADER,
+  parsePaymentRequirement,
+  PaymentRequiredError,
+  StubClaimProvider,
+  StubReceiptProvider,
+} from './payment';
+export type { PaymentProvider, PaymentRequirement, RetryHeaders } from './payment';
 export {
   BLIND_SIGNATURE_SUITE,
   checkBundle,

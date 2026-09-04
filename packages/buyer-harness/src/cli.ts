@@ -2,6 +2,13 @@
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { IssuerRequestError } from './client';
+import {
+  NoPaymentProvider,
+  PaymentRequiredError,
+  StubClaimProvider,
+  StubReceiptProvider,
+  type PaymentProvider,
+} from './payment';
 import { failures } from './conformance';
 import { purchaseBundle } from './purchase';
 import { DEFAULT_BUNDLE_PARAMETERS } from './types';
@@ -21,10 +28,27 @@ Buys one bundle and judges the response against the issuer contract.
   --epoch <id>             epoch to request (default: the issuer's current epoch)
   --payment-ref <ref>      payment reference to claim (default: random)
   --idempotency-key <key>  send an Idempotency-Key header
+  --payment <mode>         stub-claim (default) talks straight to an issuer with a
+                           synthetic claim; stub-receipt runs the full
+                           request -> 402 -> pay -> retry flow through a proxy,
+                           with the payment itself stubbed; none sends nothing
   --json                   emit the report as JSON
   --help
 
 Exit codes: ${EXIT_OK} conforming, ${EXIT_NONCONFORMING} nonconforming, ${EXIT_UNUSABLE} unusable (bad flags, issuer unreachable).`;
+
+function paymentProvider(mode: string, paymentRef: string): PaymentProvider {
+  switch (mode) {
+    case 'stub-claim':
+      return new StubClaimProvider(paymentRef);
+    case 'stub-receipt':
+      return new StubReceiptProvider();
+    case 'none':
+      return new NoPaymentProvider();
+    default:
+      throw new TypeError(`unknown --payment mode ${JSON.stringify(mode)}`);
+  }
+}
 
 function positiveInt(value: string | undefined, fallback: number, flag: string): number {
   if (value === undefined) return fallback;
@@ -45,6 +69,7 @@ async function main(): Promise<number> {
       epoch: { type: 'string' },
       'payment-ref': { type: 'string' },
       'idempotency-key': { type: 'string' },
+      payment: { type: 'string', default: 'stub-claim' },
       json: { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
     },
@@ -61,9 +86,13 @@ async function main(): Promise<number> {
     return EXIT_UNUSABLE;
   }
 
+  const paymentRef = values['payment-ref'] ?? `harness-${randomUUID()}`;
+  const payment = paymentProvider(values.payment ?? 'stub-claim', paymentRef);
+
   const result = await purchaseBundle({
+    payment,
     baseUrl: values.url,
-    paymentRef: values['payment-ref'] ?? `harness-${randomUUID()}`,
+    paymentRef,
     idempotencyKey: values['idempotency-key'],
     epoch: values.epoch,
     parameters: {
@@ -74,11 +103,22 @@ async function main(): Promise<number> {
   });
 
   if (values.json) {
-    console.log(JSON.stringify({ epoch: result.epoch, conformance: result.conformance }, null, 2));
+    console.log(
+      JSON.stringify(
+        { epoch: result.epoch, paymentFlow: result.paymentFlow, conformance: result.conformance },
+        null,
+        2,
+      ),
+    );
   } else {
     for (const check of result.conformance.checks) {
       console.log(`${check.passed ? '✓' : '✗'} ${check.name}: ${check.detail}`);
     }
+    console.log(
+      result.paymentFlow === '402-retry'
+        ? `\npayment: 402 answered and retried via ${payment.name}`
+        : `\npayment: direct, no 402 (${payment.name})`,
+    );
   }
 
   if (result.conformance.passed) return EXIT_OK;
@@ -92,7 +132,11 @@ async function main(): Promise<number> {
 try {
   process.exit(await main());
 } catch (error) {
-  if (error instanceof IssuerRequestError || error instanceof TypeError) {
+  if (
+    error instanceof IssuerRequestError ||
+    error instanceof PaymentRequiredError ||
+    error instanceof TypeError
+  ) {
     console.error(String(error.message));
     process.exit(EXIT_UNUSABLE);
   }

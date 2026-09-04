@@ -1,72 +1,111 @@
-# Payment claim interface (proposed)
+# Buyer harness
 
-**Status: proposed, not agreed.** The scope doc (M1.4) names this as "the one interface requiring
-TOON agreement" and asks for it to be settled during M0. This is our concrete proposal, implemented
-in the M0.1 stub so TOON has something running to build against. Nothing here is final until TOON
-signs off; the shape is expected to change.
+A headless buyer for the credential issuer: it reads the key document, blinds `k` blanks, buys a
+bundle, and judges the response against the issuer contract. It is a library first and a CLI
+second, because it has three jobs beyond its own tests: TOON's conformance tool against any issuer
+deployment, the seed of the future Anyone agent SDK, and the thing that proves a buy end to end in
+the sandbox.
 
-## Transport
+Lives in [packages/buyer-harness](../packages/buyer-harness/). It declares the wire format itself
+rather than importing it from the issuer, so it can judge an issuer it did not ship with.
 
-The fronting proxy forwards proof of payment in a request header:
+## CLI
 
-```
-X-Payment-Claim: <base64url(JSON)>
-```
-
-A header rather than a body field, because the proxy adds the claim to a request whose body
-(`{epoch, blinded_blanks[]}`) is built by the buyer. Splicing JSON in the proxy would mean parsing
-and re-serializing a payload that, by invariant I2, the proxy has no reason to touch.
-
-## Payload
-
-The decoded JSON is the object the scope doc specifies for M1.4:
-
-```json
-{
-  "payment_ref": "string, required",
-  "amount": "string, decimal",
-  "route_id": "string",
-  "proxy_sig": "string, base64"
-}
+```sh
+bun run harness --url http://localhost:3000
 ```
 
-`payment_ref` is the only field the issuer consumes today. It keys the retention record (I5) and,
-from M0.2, the rate limiter.
-
-## What the issuer checks, by milestone
-
-| Milestone | Checked |
-| --------- | ------- |
-| M0.1 (now) | Header present, decodes as base64url JSON, carries a non-empty `payment_ref`. |
-| M0.2 | Rate limit keyed by `payment_ref`, never by IP (I5). Idempotency keys scoped per `payment_ref`. |
-| M1.4 | `proxy_sig` verifies, and `amount` matches the bundle price. |
-
-Until M1.4 the issuer trusts any well-formed claim. The stub is not an authorization boundary and
-must not be exposed outside the sandbox.
-
-## Failure
-
-A missing or malformed claim returns `402 Payment Required` with the typed error `CLAIM_INVALID`:
-
-```json
-{ "error": { "code": "CLAIM_INVALID", "message": "missing payment claim" } }
+```
+✓ key document fields: epoch 0
+✓ key document suite: RSABSSA-SHA384-PSS-Randomized
+✓ key document validity window: 2026-01-01T00:00:00.000Z to 2027-01-01T00:00:00.000Z
+✓ bundle count: 10 blobs, as configured
+✓ signature size: all 10 blobs are 256 bytes
+✓ epoch echoed: epoch 0
 ```
 
-`402` because the issuer sits behind a proxy whose whole job is the payment flow, so a request
-arriving without a claim means payment has not been established.
+| Flag | Default | Meaning |
+| ---- | ------- | ------- |
+| `--url` | required | Issuer base URL. |
+| `--bundle-size` | `10` | `k`. Provisional until the 0.3 spec lands. |
+| `--blank-size` | `256` | Blinded blank size in bytes. |
+| `--signature-size` | `256` | Expected blob size in bytes. |
+| `--epoch` | issuer's current | Epoch to request. |
+| `--payment-ref` | random | Payment reference to claim. |
+| `--idempotency-key` | none | Sends an `Idempotency-Key` header. |
+| `--payment` | `stub-claim` | See below. |
+| `--json` | off | Emit the report as JSON for machine consumption. |
 
-## Open questions for TOON
+### Payment modes
 
-1. **Claim freshness.** The payload has no timestamp or nonce. M0.2 idempotency stops a *retry*
-   double-counting, but it does not stop a captured claim being reused for a genuinely new bundle:
-   nothing yet caps how many bundles one `payment_ref` may buy. That cap is the payment-side check
-   in M1.4. Should the claim also carry its own expiry, so a leaked claim ages out?
-2. **`proxy_sig` scope.** Does the signature cover the claim fields only, or also bind the request
-   body (the blinded blanks)? Body-binding prevents a claim being re-pointed at a different bundle,
-   at the cost of the proxy hashing a payload it otherwise ignores.
-3. **Key distribution.** How does the issuer learn the proxy's public key, and how is it rotated?
-4. **`amount` encoding.** Decimal string, or integer base units of $ANYONE? Base units avoid
-   float-parsing disagreements at the price comparison in M1.4.
-5. **Error taxonomy.** Two codes are ours, not the scope doc's: `REQUEST_INVALID` (400) for a
-   malformed envelope, and `IDEMPOTENCY_CONFLICT` (409) for a key reused with a different body.
-   Confirm the names, or tell us the codes you want.
+| Mode | Flow |
+| ---- | ---- |
+| `stub-claim` | Talks straight to an issuer with a synthetic `X-Payment-Claim`, as if a proxy had already forwarded one. Cannot satisfy a 402. |
+| `stub-receipt` | Runs the full `request -> 402 -> pay -> retry` flow through a proxy, with the payment itself stubbed. |
+| `none` | Sends nothing, so a 402 is fatal. Use it to confirm a proxy actually gates the route. |
+
+`stub-receipt` fabricates a receipt rather than moving $ANYONE; real settlement lands when the
+channel contracts are on Sepolia, and only `PaymentProvider.pay()` changes. Supply your own
+provider through `purchaseBundle({ payment })` to plug in a wallet.
+
+The retry happens at most once, and `PurchaseResult.paymentFlow` records which route the purchase
+took (`direct` or `402-retry`).
+
+### Exit codes
+
+| Code | Meaning |
+| ---- | ------- |
+| `0` | Conforming. |
+| `1` | Nonconforming. Failed check names are printed to stderr. |
+| `2` | Unusable: bad flags, or the issuer was unreachable or returned an error status. |
+
+`1` and `2` are kept distinct so CI can tell "the issuer is wrong" from "the run never happened".
+
+## Library
+
+```ts
+import { purchaseBundle } from '@anyone-protocol/buyer-harness';
+
+const { response, conformance } = await purchaseBundle({
+  baseUrl: 'http://localhost:3000',
+  paymentRef: 'pay-1',
+});
+
+if (!conformance.passed) { /* conformance.checks carries name, passed, detail */ }
+```
+
+`IssuerClient` is available directly for callers that want the endpoints without the judging, and
+every check is exported (`checkBundle`, `checkKeyDocument`) for callers assembling their own report.
+
+## Checks
+
+| Check | Asserts |
+| ----- | ------- |
+| `key document fields` | `epoch_id`, `not_before`, `not_after`, `alg`, `pubkey` all present. |
+| `key document suite` | `alg` is `RSABSSA-SHA384-PSS-Randomized` (I1). |
+| `key document validity window` | `not_before` precedes `not_after`. |
+| `bundle count` | Exactly `k` blobs (I3). |
+| `signature size` | Every blob is valid base64 decoding to exactly the expected size. |
+| `epoch echoed` | The response echoes the requested epoch. |
+| `signature verifies` | Every blob unblinds to a signature that verifies under the epoch public key (M1.1). |
+
+## Blinding
+
+`RsaBlinder` in [blinding.ts](../packages/buyer-harness/src/blinding.ts) implements RFC 9474
+Prepare/Blind/Finalize over `@cloudflare/blindrsa-ts`, suite `RSABSSA-SHA384-PSS-Randomized`. The
+serial is fresh random bytes chosen by the buyer; the issuer only ever sees the blinded form (I2).
+
+`prepare()` returns the blinded blanks to send plus the state needed to unblind, so `finalize()` can
+turn the issuer's blind signatures into credentials and `verify()` can check each one under the
+epoch public key. Supply your own `Blinder` through `purchaseBundle({ blinder })` to drive the flow
+differently.
+
+Note that correctly sized random bytes are **not** valid blinded blanks: RFC 9474 requires the
+blinded message to be less than the RSA modulus, so an issuer signing for real rejects roughly a
+quarter of random ones with `BLANK_FORMAT`.
+
+## Not yet built
+
+Deterministic test vectors for wallet interop (M1.1) are still outstanding. `blind()` draws its
+blind factor from an internal RNG with no injection point, so RFC 9474 FixedBlind vectors are not
+reachable through the library's public API. Resolving that is a prerequisite, not a detail.

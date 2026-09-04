@@ -99,8 +99,10 @@ check it against the contract; it is also the seed of the future agent SDK.
 bun run harness --url http://localhost:3000
 ```
 
-It exits `0` conforming, `1` nonconforming (naming the failed checks), and `2` when the run could
-not happen at all. Full flag list, library API and the M1.1 upgrade path are in
+It also drives the full `request -> 402 -> pay -> retry` flow through a fronting proxy
+(`--payment stub-receipt`), with the payment itself stubbed until the channel contracts are on
+Sepolia. It exits `0` conforming, `1` nonconforming (naming the failed checks), and `2` when the run
+could not happen at all. Full flag list, library API and the M1.1 upgrade path are in
 [docs/buyer-harness.md](docs/buyer-harness.md).
 
 ## Configuration
@@ -115,8 +117,12 @@ not happen at all. Full flag list, library API and the M1.1 upgrade path are in
 | `SIGNATURE_SIZE_BYTES` | `256` | Size of each returned blob (RSA-2048). |
 | `KEY_DOCUMENT_PATH` | `config/keys/current.json` | Static key document to serve. |
 | `ISSUER_PRIVATE_KEY_PATH` | `config/keys/current.pem` | Epoch signing key, PKCS#8 PEM. |
-| `RATE_LIMIT_MAX` | `60` | Requests per window, per `payment_ref`. |
-| `RATE_LIMIT_WINDOW_SECONDS` | `60` | Rate limit window length. |
+| `RATE_LIMIT_MAX` | `60` | Requests per sliding window, per `payment_ref`. |
+| `RATE_LIMIT_WINDOW_SECONDS` | `60` | Sliding window length. |
+
+The limiter is a sliding window in Redis, so the budget cannot be spent twice back to back across a
+wall-clock seam, and a blocked request still occupies a slot: hammering extends the block rather
+than resetting it.
 
 ## Stack
 
