@@ -7,7 +7,13 @@ import { selectSigningSuite } from './suite';
 
 const WORKER_URL = new URL('./blind-sign.worker.ts', import.meta.url);
 
+interface Slot {
+  readonly worker: Worker;
+  alive: boolean;
+}
+
 interface Pending {
+  readonly slot: Slot;
   resolve(signature: string): void;
   reject(error: Error): void;
 }
@@ -15,21 +21,23 @@ interface Pending {
 /**
  * A fixed pool of blind-signing workers.
  *
- * One signature is ~280ms of CPU on this platform (see README), so the pool
- * exists to keep that off the event loop and to use more than one core. Each
- * worker takes one blank at a time: the work is CPU-bound, so pipelining into
- * a busy worker would only add latency.
+ * Signing is CPU-bound, so each worker takes one blank at a time: pipelining
+ * into a busy worker would only add latency. Workers are spawned on first use,
+ * so a process that never signs (a migration run, a test with signing stubbed)
+ * starts no threads.
  *
- * Spawned on first use rather than at boot, so a process that never signs (a
- * migration run, a test with signing stubbed) starts no threads.
+ * A worker that dies or stops answering must not take the issuer with it, so
+ * every task is bounded by a timeout and a lost worker is replaced.
  */
 @Injectable()
 export class SignerPool implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SignerPool.name);
   private readonly pending = new Map<number, Pending>();
-  private readonly idle: Worker[] = [];
-  private readonly waiting: ((worker: Worker) => void)[] = [];
-  private workers?: Promise<Worker[]>;
+  private readonly slots: Slot[] = [];
+  private readonly idle: Slot[] = [];
+  private readonly waiting: ((slot: Slot) => void)[] = [];
+  private started?: Promise<void>;
+  private shuttingDown = false;
   private nextId = 0;
 
   constructor(
@@ -52,75 +60,101 @@ export class SignerPool implements OnModuleInit, OnModuleDestroy {
   }
 
   async sign(blindedBlank: string): Promise<string> {
-    await this.ensureWorkers();
-    const worker = await this.acquire();
+    await this.ensureStarted();
+    const slot = await this.acquire();
     const id = this.nextId++;
 
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       return await new Promise<string>((resolve, reject) => {
-        this.pending.set(id, { resolve, reject });
-        worker.postMessage({ id, blindedBlank });
+        this.pending.set(id, { slot, resolve, reject });
+        timer = setTimeout(() => {
+          this.pending.delete(id);
+          reject(new Error(`blind signing timed out after ${this.config.signingTimeoutMs}ms`));
+          // A worker that missed its deadline is not trusted with the next
+          // request: replacing it stops one wedged thread eating the pool.
+          this.retire(slot, 'timed out');
+        }, this.config.signingTimeoutMs);
+        slot.worker.postMessage({ id, blindedBlank });
       });
     } finally {
-      this.release(worker);
+      clearTimeout(timer);
+      if (slot.alive) this.release(slot);
     }
   }
 
   async onModuleDestroy(): Promise<void> {
-    if (!this.workers) return;
-    await Promise.all((await this.workers).map((worker) => worker.terminate()));
+    this.shuttingDown = true;
+    await Promise.all(this.slots.map((slot) => slot.worker.terminate()));
   }
 
-  private ensureWorkers(): Promise<Worker[]> {
+  private ensureStarted(): Promise<void> {
     // Assigned before the first await, so concurrent first requests share one
-    // spawn instead of each starting a pool.
-    return (this.workers ??= this.spawn());
+    // startup instead of each spawning a pool.
+    return (this.started ??= this.spawnAll());
   }
 
-  private async spawn(): Promise<Worker[]> {
-    const count = this.config.signingWorkers;
-    const privateKeyPem = this.keys.epochSigningKeyPem();
+  private async spawnAll(): Promise<void> {
+    for (let i = 0; i < this.config.signingWorkers; i += 1) this.spawn();
+    this.logger.log(`blind signing on ${this.config.signingWorkers} worker thread(s)`);
+  }
 
-    const workers = Array.from({ length: count }, () => {
-      const worker = new Worker(WORKER_URL, {
-        workerData: { privateKeyPem, useNativeRsa: this.config.useNativeRsa },
-      });
-      worker.on('message', (reply: SignReply) => this.settle(reply));
-      worker.on('error', (error: Error) => this.failAll(error));
-      worker.unref();
-      this.idle.push(worker);
-      return worker;
+  private spawn(): void {
+    const worker = new Worker(WORKER_URL, {
+      workerData: { privateKeyPem: this.keys.epochSigningKeyPem(), useNativeRsa: this.config.useNativeRsa },
     });
+    const slot: Slot = { worker, alive: true };
 
-    this.logger.log(`blind signing on ${count} worker thread(s)`);
-    return workers;
+    worker.on('message', (reply: SignReply) => this.settle(reply));
+    worker.on('error', (error: Error) => this.retire(slot, error.message));
+    worker.on('exit', (code) => {
+      if (slot.alive) this.retire(slot, `exited with code ${code}`);
+    });
+    worker.unref();
+
+    this.slots.push(slot);
+    this.release(slot);
   }
 
   private settle(reply: SignReply): void {
     const pending = this.pending.get(reply.id);
-    if (!pending) return;
+    if (!pending) return; // Already timed out.
     this.pending.delete(reply.id);
     if ('error' in reply) pending.reject(new Error(reply.error));
     else pending.resolve(reply.signature);
   }
 
-  /** A worker that dies takes its in-flight work with it; fail loudly. */
-  private failAll(error: Error): void {
-    this.logger.error(`signing worker failed: ${error.message}`);
+  /** Drops a worker, fails whatever it was carrying, and replaces it. */
+  private retire(slot: Slot, why: string): void {
+    if (!slot.alive) return;
+    slot.alive = false;
+
+    const index = this.slots.indexOf(slot);
+    if (index >= 0) this.slots.splice(index, 1);
+    const idleIndex = this.idle.indexOf(slot);
+    if (idleIndex >= 0) this.idle.splice(idleIndex, 1);
+
     for (const [id, pending] of this.pending) {
+      if (pending.slot !== slot) continue;
       this.pending.delete(id);
-      pending.reject(error);
+      pending.reject(new Error(`signing worker ${why}`));
     }
+
+    void slot.worker.terminate();
+    if (this.shuttingDown) return;
+
+    this.logger.error(`signing worker ${why}; replacing it`);
+    this.spawn();
   }
 
-  private acquire(): Promise<Worker> {
+  private acquire(): Promise<Slot> {
     const free = this.idle.pop();
     return free ? Promise.resolve(free) : new Promise((resolve) => this.waiting.push(resolve));
   }
 
-  private release(worker: Worker): void {
+  private release(slot: Slot): void {
     const next = this.waiting.shift();
-    if (next) next(worker);
-    else this.idle.push(worker);
+    if (next) next(slot);
+    else this.idle.push(slot);
   }
 }

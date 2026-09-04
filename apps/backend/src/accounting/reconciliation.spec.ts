@@ -22,9 +22,9 @@ describe('aggregate accounting', () => {
     // k=2 keeps the "x k" arithmetic meaningful while holding 1000 purchases
     // to 2000 RSA signing operations, and a huge rate limit keeps the scripted
     // run from throttling itself.
-    // stubSigner: this scenario is about the counters, and the crypto path is
-    // covered by M1.1 and the harness tests. See StartIssuerOptions.
-    harness = await startIssuer({ bundleSize: 2, rateLimitMax: 10_000 }, { stubSigner: true });
+    // Real signing: the RSA-RAW fast path makes 2000 signatures affordable, so
+    // the scripted run exercises the path a real purchase takes.
+    harness = await startIssuer({ bundleSize: 2, rateLimitMax: 10_000 });
     reconciliation = harness.app.get(Reconciliation);
     counters = harness.app.get(EpochCounters);
   });

@@ -124,6 +124,7 @@ could not happen at all. Full flag list, library API and the M1.1 upgrade path a
 | `RECONCILIATION_INTERVAL_SECONDS` | `60` | How often the reconciliation cycle runs. |
 | `SIGNING_WORKERS` | `4` | Blind-signing worker threads. Match the CPU allocation. |
 | `SIGNING_NATIVE_RSA` | `true` | Use the RSA-RAW fast path. `false` forces the pure-JS path. |
+| `SIGNING_TIMEOUT_MS` | `10000` | Bounds one signing task. Raise it if forcing the pure-JS path. |
 | `RATE_LIMIT_MAX` | `60` | Requests per sliding window, per `payment_ref`. |
 | `RATE_LIMIT_WINDOW_SECONDS` | `60` | Sliding window length. |
 
@@ -265,6 +266,11 @@ conditions this meets. The risk is contained rather than assumed away:
 
 Set `SIGNING_NATIVE_RSA=false` to force the pure-JS path. Set `SIGNING_WORKERS` to match the
 deployment's CPU allocation; each worker holds its own copy of the epoch key.
+
+The pool also has to survive its workers. Every task is bounded by
+`SIGNING_TIMEOUT_MS`, and a worker that dies or misses its deadline is terminated and replaced
+rather than left to swallow requests: without that, one wedged thread silently ate pool capacity
+and a lost worker hung every request that reached it, forever.
 
 **The durable fix is still upstream.** A Node/Bun backend contributed to `blindrsa-ts` would make
 this polyfill unnecessary, and would work identically on either runtime.

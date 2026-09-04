@@ -20,6 +20,8 @@ export interface IssuerConfig {
   readonly signingWorkers: number;
   /** Use the RSA-RAW fast path. Off falls back to the library's pure-JS path. */
   readonly useNativeRsa: boolean;
+  /** Bounds one signing task, so a wedged worker cannot strand a request. */
+  readonly signingTimeoutMs: number;
 }
 
 function positiveInt(value: string | undefined, fallback: number, name: string): number {
@@ -49,5 +51,6 @@ export function loadIssuerConfig(env: NodeJS.ProcessEnv = process.env): IssuerCo
     ),
     signingWorkers: positiveInt(env.SIGNING_WORKERS, 4, 'SIGNING_WORKERS'),
     useNativeRsa: (env.SIGNING_NATIVE_RSA ?? 'true') !== 'false',
+    signingTimeoutMs: positiveInt(env.SIGNING_TIMEOUT_MS, 10_000, 'SIGNING_TIMEOUT_MS'),
   };
 }

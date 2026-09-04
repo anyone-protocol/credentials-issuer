@@ -9,9 +9,7 @@ import {
   importProxySigningKey,
   signPaymentClaim,
 } from '../../../../packages/buyer-harness/src/claim';
-import { createHash } from 'node:crypto';
 import { RsaBlinder } from '../../../../packages/buyer-harness/src/blinding';
-import { BlindSigner } from '../signing/blind-signer.service';
 import { AppModule } from '../app.module';
 import { ISSUER_CONFIG, loadIssuerConfig, type IssuerConfig } from '../config/issuer.config';
 import type { KeyDocument } from '../keys/key-document';
@@ -28,21 +26,17 @@ export interface IssuerHarness {
   close(): Promise<void>;
 }
 
-export interface StartIssuerOptions {
-  /**
-   * Replaces blind signing with fast deterministic filler.
-   *
-   * Only for tests about something other than signing. blindrsa-ts falls back
-   * to pure-JS bignum arithmetic here (no RSA-RAW on this platform), so a real
-   * signature costs ~280ms: a thousand-purchase run would take ten minutes and
-   * measure the library rather than the code under test.
-   */
-  readonly stubSigner?: boolean;
+/**
+ * A complete config with overrides applied. Tests must not hand-build partial
+ * configs: a missing field reads as undefined and fails in ways that look like
+ * the code under test (a missing timeout fires at 0ms, not never).
+ */
+export function testIssuerConfig(overrides: Partial<IssuerConfig> = {}): IssuerConfig {
+  return { ...loadIssuerConfig(), ...overrides };
 }
 
 export async function startIssuer(
   overrides: Partial<IssuerConfig> = {},
-  options: StartIssuerOptions = {},
 ): Promise<IssuerHarness> {
   // Resolved from the source tree so tests do not depend on the caller's cwd.
   // Dev keys are gitignored, so generate them on first run rather than making
@@ -55,24 +49,7 @@ export async function startIssuer(
   // spec files bun runs in one process.
   const builder = Test.createTestingModule({ imports: [AppModule] });
   if (Object.keys(overrides).length > 0) {
-    builder.overrideProvider(ISSUER_CONFIG).useValue({ ...loadIssuerConfig(), ...overrides });
-  }
-  if (options.stubSigner) {
-    const size = overrides.signatureSizeBytes ?? loadIssuerConfig().signatureSizeBytes;
-    builder.overrideProvider(BlindSigner).useValue({
-      suiteName: 'stub-signer',
-      // Deterministic, like the real BlindSign, so idempotent replay still
-      // reproduces its response.
-      signBlindedBlank: async (blank: string) => {
-        const chunks: Buffer[] = [];
-        for (let counter = 0, produced = 0; produced < size; counter += 1) {
-          const chunk = createHash('sha512').update(`${counter}:${blank}`).digest();
-          chunks.push(chunk);
-          produced += chunk.byteLength;
-        }
-        return Buffer.concat(chunks, size).toString('base64');
-      },
-    });
+    builder.overrideProvider(ISSUER_CONFIG).useValue(testIssuerConfig(overrides));
   }
   const moduleRef = await builder.compile();
   const app: INestApplication = moduleRef.createNestApplication();

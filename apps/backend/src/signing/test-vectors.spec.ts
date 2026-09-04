@@ -9,6 +9,7 @@ import {
 } from '../../../../packages/buyer-harness/src/vector-file';
 import { base64ToBytes } from '../keys/bytes';
 import { scenario } from '../testing/scenario';
+import { testIssuerConfig } from '../testing/issuer-harness';
 import { SignerPool } from './signer-pool';
 
 const REPO_ROOT = join(import.meta.dir, '../../../..');
@@ -36,7 +37,7 @@ describe('published test vectors', () => {
     for (const vector of file.vectors) {
       // One pool per vector: each carries its own key.
       const pool = new SignerPool(
-        { signingWorkers: 1 } as never,
+        testIssuerConfig({ signingWorkers: 1 }),
         {
           epochSigningKeyPem: () =>
             derToPkcs8Pem(Buffer.from(vector.private_key_pkcs8, 'hex').buffer as ArrayBuffer),
