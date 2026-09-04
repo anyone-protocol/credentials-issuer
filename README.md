@@ -250,8 +250,8 @@ Measured with 8 concurrent `k=10` bundles:
 
 ### Why this is safe, and how it is guarded
 
-Supplying `RSA-RAW` is a judgement call against invariant I1, so the risk is contained rather than
-assumed away:
+Invariant I1 was amended on 2026-09-04 to permit supplying a missing platform primitive under
+conditions this meets. The risk is contained rather than assumed away:
 
 - **It reimplements no protocol step.** Prepare, blind, blindSign, finalize and verify all stay in
   the library. `supportsRSARAW` is a public constructor parameter, not an internal.
@@ -266,8 +266,8 @@ assumed away:
 Set `SIGNING_NATIVE_RSA=false` to force the pure-JS path. Set `SIGNING_WORKERS` to match the
 deployment's CPU allocation; each worker holds its own copy of the epoch key.
 
-**The durable fix is upstream.** A Node/Bun backend contributed to `blindrsa-ts` would make this
-polyfill unnecessary, and would work identically on either runtime.
+**The durable fix is still upstream.** A Node/Bun backend contributed to `blindrsa-ts` would make
+this polyfill unnecessary, and would work identically on either runtime.
 
 ## Database migrations
 

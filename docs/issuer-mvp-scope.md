@@ -5,7 +5,7 @@
 
 ## Invariants (agents: violating one of these fails the ticket, full stop)
 
-- I1 **No hand-rolled crypto.** Blind signatures come from `@cloudflare/blindrsa-ts` (RFC 9474 compliant, ships RFC test vectors). Suite: **RSABSSA-SHA384-PSS-Randomized**. No custom implementations, no "optimizations" of library internals.
+- I1 **No hand-rolled crypto.** Blind signatures come from `@cloudflare/blindrsa-ts` (RFC 9474 compliant, ships RFC test vectors). Suite: **RSABSSA-SHA384-PSS-Randomized**. No custom implementations, no "optimizations" of library internals. *Amended 2026-09-04:* supplying a missing **platform primitive** is permitted where the library already has a documented path for it (WebCrypto `RSA-RAW`, via the public `supportsRSARAW` parameter), provided every protocol step still runs inside the library, the primitive is backed by a vetted implementation rather than written here, and it is gated on a known-answer test against an independent RFC 9474 implementation. Reimplementing any protocol step remains forbidden. See the README for the reasoning and the guards.
 - I2 **The issuer never sees an unblinded serial.** Requests carry blinded blanks; responses carry blind signatures. Any code path that logs, stores, or parses blank/signature payload bytes beyond size/count validation is a bug.
 - I3 **One denomination, fixed bundles.** `POST /v1/bundles` issues exactly `k` credentials per call at one price. No variable amounts, no credential types, no country typing.
 - I4 **Epoch keys only.** All signing under the current epoch key; key doc published at `GET /v1/keys/current` (static file in MVP, simulating consensus pinning — format must match the 0.3 spec's consensus-publication schema).
