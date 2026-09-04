@@ -91,6 +91,18 @@ All errors return `{ "error": { "code": ..., "message": ... } }`.
 Count is checked before format, so a request that is both over-count and malformed reports
 `BUNDLE_SIZE`.
 
+## For the TOON proxy team
+
+[docs/toon-runbook.md](docs/toon-runbook.md) is the starting point: run the published image, drive a
+purchase, and read the two interfaces the proxy implements. It ends with the open questions we need
+answered, which are easier to judge having seen the runtime.
+
+```sh
+bun run keys:dev
+docker compose -f compose.published.yml up        # pulls the image, nothing is built
+bun run harness --url http://localhost:3000 --proxy-key config/keys/proxy.pem
+```
+
 ## Buyer harness
 
 A headless buyer and conformance tool, shipped as a library plus CLI in
@@ -363,12 +375,14 @@ Publishing authenticates with the built-in `GITHUB_TOKEN` — no repository secr
 ├── package.json                bun workspaces (apps/*, packages/*), root scripts
 ├── tsconfig.base.json          shared strict TS config
 ├── compose.yml                 local backing services (redis, postgres)
-├── compose.full.yml            the above plus the issuer in a container
+├── compose.full.yml            the above plus the issuer built from source
+├── compose.published.yml       the above plus the published image, nothing built
 ├── config/keys/                epoch key + key document, gitignored, mounted at runtime
 ├── scripts/scenario-report.ts  scope scenario coverage by milestone
 ├── .github/workflows/ci.yaml   test + publish image
 ├── docs/
 │   ├── issuer-mvp-scope.md     scope, invariants, BDD scenarios (spec of record)
+│   ├── toon-runbook.md         run it, drive a purchase, implement the proxy side
 │   ├── payment-claim.md        proposed proxy claim interface, pending TOON
 │   ├── buyer-harness.md        harness CLI, library API, conformance checks
 │   └── test-vectors.md         published RFC 9474 vectors and how they cross-verify

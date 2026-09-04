@@ -1,0 +1,13 @@
+{
+  "note": "Worked example for the X-Payment-Claim header. Ed25519 is deterministic, so a correct implementation reproduces proxy_sig exactly. Throwaway key, published deliberately.",
+  "proxy_private_key_pkcs8_pem": "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIFdk5mGwUd7WwrdJOTaOJyftqXFy6doMGpuY0eyB7uwO\n-----END PRIVATE KEY-----\n",
+  "proxy_public_key_spki_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA7pWH9LPJiwYIpLru4qHeA6SJZkJIswpa7AvtNyLYtJA=\n-----END PUBLIC KEY-----\n",
+  "claim_fields": {
+    "payment_ref": "pay-example-0001",
+    "amount": "1.00",
+    "route_id": "route-1"
+  },
+  "canonical_payload_utf8": "{\"amount\":\"1.00\",\"payment_ref\":\"pay-example-0001\",\"route_id\":\"route-1\"}",
+  "proxy_sig_base64url": "TNiKCvt6pXcNapqzyv8C_eFxWOPaCY0XThfS4Ouk4K99lrQwOtgXtJpXPDRxT0q0YET0xUfKz3Mts3cTxq6iBA",
+  "header_value": "eyJwYXltZW50X3JlZiI6InBheS1leGFtcGxlLTAwMDEiLCJhbW91bnQiOiIxLjAwIiwicm91dGVfaWQiOiJyb3V0ZS0xIiwicHJveHlfc2lnIjoiVE5pS0N2dDZwWGNOYXBxenl2OENfZUZ4V09QYUNZMFhUaGZTNE91azRLOTlsclF3T3RnWHRKcFhQRFJ4VDBxMFlFVDB4VWZLejNNdHMzY1R4cTZpQkEifQ"
+}

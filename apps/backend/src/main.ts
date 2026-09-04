@@ -7,7 +7,7 @@ async function bootstrap() {
   app.enableShutdownHooks();
   const port = Number(process.env.PORT ?? 3000);
   await app.listen(port);
-  console.log(`credential-issuer listening on :${port}`);
+  console.log(`credentials-issuer listening on :${port}`);
 }
 
 void bootstrap();
