@@ -1,16 +1,21 @@
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { DataSource } from 'typeorm';
+import { ensureDevKeys } from '../../../../scripts/generate-dev-keys';
+import { RsaBlinder } from '../../../../packages/buyer-harness/src/blinding';
 import { AppModule } from '../app.module';
 import { ISSUER_CONFIG, loadIssuerConfig, type IssuerConfig } from '../config/issuer.config';
+import type { KeyDocument } from '../keys/key-document';
+import { KeysService } from '../keys/keys.service';
 
 const REPO_ROOT = join(import.meta.dir, '../../../..');
 
 export interface IssuerHarness {
   readonly url: string;
   readonly config: IssuerConfig;
+  readonly keyDocument: KeyDocument;
   readonly dataSource: DataSource;
   close(): Promise<void>;
 }
@@ -19,7 +24,11 @@ export async function startIssuer(
   overrides: Partial<IssuerConfig> = {},
 ): Promise<IssuerHarness> {
   // Resolved from the source tree so tests do not depend on the caller's cwd.
+  // Dev keys are gitignored, so generate them on first run rather than making
+  // `bun test` fail on a fresh clone.
+  await ensureDevKeys();
   process.env.KEY_DOCUMENT_PATH ??= join(REPO_ROOT, 'config/keys/current.json');
+  process.env.ISSUER_PRIVATE_KEY_PATH ??= join(REPO_ROOT, 'config/keys/current.pem');
 
   // Overridden via DI rather than process.env, which would leak between the
   // spec files bun runs in one process.
@@ -34,15 +43,33 @@ export async function startIssuer(
   return {
     url: await app.getUrl(),
     config: app.get<IssuerConfig>(ISSUER_CONFIG),
+    keyDocument: app.get(KeysService).current(),
     dataSource: app.get(DataSource),
     close: () => app.close(),
   };
 }
 
-export function validBlanks(config: IssuerConfig, count = config.bundleSize): string[] {
-  return Array.from({ length: count }, () =>
-    randomBytes(config.blankSizeBytes).toString('base64'),
-  );
+/**
+ * Real RFC 9474 blinded messages. Random bytes of the right length are NOT
+ * valid input once the issuer signs for real: a blinded message must be less
+ * than the modulus, so random ones are rejected roughly a quarter of the time.
+ */
+export async function validBlanks(
+  harness: IssuerHarness,
+  count = harness.config.bundleSize,
+): Promise<string[]> {
+  const prepared = await new RsaBlinder().prepare(count, harness.keyDocument.pubkey);
+  return [...prepared.blindedBlanks];
+}
+
+/**
+ * Right length, but never a valid blinded message: all-ones exceeds any RSA
+ * modulus of the same width, so this is deterministic where random bytes would
+ * land in range roughly three times in four.
+ */
+export function outOfRangeBlanks(config: IssuerConfig, count = config.bundleSize): string[] {
+  const blank = Buffer.alloc(config.blankSizeBytes, 0xff).toString('base64');
+  return Array.from({ length: count }, () => blank);
 }
 
 export function claimHeader(paymentRef: string): string {

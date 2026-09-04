@@ -2,13 +2,16 @@
   "name": "credential-issuer",
   "private": true,
   "workspaces": [
-    "apps/*"
+    "apps/*",
+    "packages/*"
   ],
   "scripts": {
     "dev": "bun --watch apps/backend/src/main.ts",
     "start": "bun apps/backend/src/main.ts",
     "test": "bun test",
-    "scenarios": "bun scripts/scenario-report.ts"
+    "scenarios": "bun scripts/scenario-report.ts",
+    "harness": "bun packages/buyer-harness/src/cli.ts",
+    "keys:dev": "bun scripts/generate-dev-keys.ts"
   },
   "devDependencies": {
     "@nestjs/testing": "^11.0.0",

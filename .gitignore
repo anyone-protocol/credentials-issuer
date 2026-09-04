@@ -3,3 +3,7 @@ dist/
 .env
 *.log
 .claude
+
+# Development epoch keys. Stage and live get theirs from Vault.
+config/keys/*.pem
+config/keys/current.json

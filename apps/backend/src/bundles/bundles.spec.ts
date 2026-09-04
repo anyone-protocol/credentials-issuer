@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { scenario } from '../testing/scenario';
 import {
   errorCode,
+  outOfRangeBlanks,
   postBundle,
   startIssuer,
   uniquePaymentRef,
@@ -28,7 +29,7 @@ describe('POST /v1/bundles', () => {
     const paymentRef = uniquePaymentRef();
     const response = await postBundle(
       harness,
-      { epoch: '0', blinded_blanks: validBlanks(config) },
+      { epoch: '0', blinded_blanks: await validBlanks(harness) },
       { paymentRef },
     );
 
@@ -60,7 +61,7 @@ describe('POST /v1/bundles', () => {
 
     const response = await postBundle(harness, {
       epoch: '0',
-      blinded_blanks: validBlanks(config, config.bundleSize + 1),
+      blinded_blanks: await validBlanks(harness, config.bundleSize + 1),
     });
 
     expect(response.status).toBe(400);
@@ -74,7 +75,7 @@ describe('POST /v1/bundles', () => {
     const undersized = Buffer.alloc(config.blankSizeBytes - 1).toString('base64');
 
     for (const blank of [undersized, 'not!valid!base64', '']) {
-      const blanks = validBlanks(config);
+      const blanks = await validBlanks(harness);
       blanks[config.bundleSize - 1] = blank;
 
       const response = await postBundle(harness, { epoch: '0', blinded_blanks: blanks });
@@ -85,12 +86,26 @@ describe('POST /v1/bundles', () => {
     }
   });
 
+  // Not a scope scenario. Right length, but not a valid blinded message: the
+  // signing library rejects it, and that must surface as a typed error rather
+  // than a 500.
+  it('rejects a correctly sized blank that is not a valid blinded message', async () => {
+    const response = await postBundle(harness, {
+      epoch: '0',
+      blinded_blanks: outOfRangeBlanks(harness.config),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await errorCode(response)).toBe('BLANK_FORMAT');
+    expect(await harness.dataSource.query('SELECT * FROM issuance_record')).toHaveLength(0);
+  });
+
   // Not a scope scenario: M0.1 must still do something coherent when the proxy
   // forwards no claim. See docs/payment-claim.md.
   it('rejects a request carrying no payment claim', async () => {
     const response = await postBundle(
       harness,
-      { epoch: '0', blinded_blanks: validBlanks(harness.config) },
+      { epoch: '0', blinded_blanks: await validBlanks(harness) },
       { paymentRef: null },
     );
 

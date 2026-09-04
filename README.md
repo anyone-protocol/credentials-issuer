@@ -12,18 +12,19 @@ non-negotiable.
 
 ## Status
 
-M0.1 and M0.2 complete: the API skeleton serves stub bundles and the static key document, with
-idempotency keys and per-`payment_ref` rate limiting. Signatures are deterministic filler of the
-right size, not real blind signatures, and the payment claim is parsed but not verified. Do not
-expose this outside the sandbox.
+M0.1, M0.2 and M0.4 complete, M1.1 half done. Issuance is **real**: the issuer blind-signs under an
+epoch RSA key with `@cloudflare/blindrsa-ts`, and the harness blinds, unblinds and verifies the
+result. Still missing: the payment claim is parsed but not verified (M1.4), epoch keys are files
+rather than Vault-managed and never rotate (M1.2), and the published test vectors are not written
+yet (M1.1). Do not expose this outside the sandbox.
 
 | Endpoint | Milestone | State |
 | -------- | --------- | ----- |
 | `GET /healthz` | | live |
-| `POST /v1/bundles` | M0.1, M0.2 | live, stub blobs (real signing lands in M1.1) |
+| `POST /v1/bundles` | M0.1, M0.2, M1.1 | live, real RFC 9474 blind signatures |
 | `GET /v1/keys/current` | M0.1 | live, static file (Vault-backed epoch keys land in M1.2) |
 
-Next: M0.3 (sandbox deployment behind the TOON proxy) and M0.4 (buyer harness).
+Next: M1.1's test vectors, then M0.3 (sandbox deployment behind the TOON proxy).
 
 ## API
 
@@ -50,12 +51,26 @@ or signature bytes beyond validating their count and length.
 
 ### `GET /v1/keys/current`
 
-Serves the static key document (I4) as `{epoch_id, not_before, not_after, alg, pubkey}`. The
-document is validated at boot, so a malformed file stops startup rather than surfacing later.
+Serves the static key document (I4) as `{epoch_id, not_before, not_after, alg, pubkey}`.
 `root_sig` is added in M1.2 when the issuer root key exists.
 
-The checked-in [config/keys/current.json](config/keys/current.json) is a development placeholder.
-Its private key was generated and discarded, so nothing can sign under it.
+At boot the issuer validates the document, loads the epoch signing key, and checks that the two
+match. Publishing a pubkey that cannot verify our own signatures is worse than not starting, so a
+mismatch stops startup.
+
+## Epoch keys
+
+The signing key is a PKCS#8 PEM at `ISSUER_PRIVATE_KEY_PATH`, and the key document at
+`KEY_DOCUMENT_PATH` publishes its public half. Neither is committed and neither is baked into the
+image: the container mounts them at runtime, and from M1.2 they come from Vault.
+
+For local work, generate a throwaway pair:
+
+```sh
+bun run keys:dev          # writes config/keys/current.pem + current.json, both gitignored
+```
+
+The test suite generates them on first run, so a fresh clone needs no extra step.
 
 ### Typed errors
 
@@ -65,13 +80,27 @@ All errors return `{ "error": { "code": ..., "message": ... } }`.
 | ---- | ------ | ----- |
 | `REQUEST_INVALID` | 400 | Body is not an object, or `epoch` is missing. Not a scope-defined code, see [docs/payment-claim.md](docs/payment-claim.md). |
 | `BUNDLE_SIZE` | 400 | `blinded_blanks` length is not `k`. |
-| `BLANK_FORMAT` | 400 | A blank is not base64, or does not decode to exactly the configured blank size. |
+| `BLANK_FORMAT` | 400 | A blank is not base64, does not decode to the configured blank size, or is not a valid blinded message for the epoch key. |
 | `CLAIM_INVALID` | 402 | Payment claim missing or malformed. |
 | `IDEMPOTENCY_CONFLICT` | 409 | `Idempotency-Key` reused for a different request. Not a scope-defined code. |
 | `RATE_LIMITED` | 429 | Too many requests for this `payment_ref`. |
 
 Count is checked before format, so a request that is both over-count and malformed reports
 `BUNDLE_SIZE`.
+
+## Buyer harness
+
+A headless buyer and conformance tool, shipped as a library plus CLI in
+[packages/buyer-harness](packages/buyer-harness/). TOON can point it at any issuer deployment to
+check it against the contract; it is also the seed of the future agent SDK.
+
+```sh
+bun run harness --url http://localhost:3000
+```
+
+It exits `0` conforming, `1` nonconforming (naming the failed checks), and `2` when the run could
+not happen at all. Full flag list, library API and the M1.1 upgrade path are in
+[docs/buyer-harness.md](docs/buyer-harness.md).
 
 ## Configuration
 
@@ -84,6 +113,7 @@ Count is checked before format, so a request that is both over-count and malform
 | `BLANK_SIZE_BYTES` | `256` | Expected decoded size of each blinded blank (RSA-2048). |
 | `SIGNATURE_SIZE_BYTES` | `256` | Size of each returned blob (RSA-2048). |
 | `KEY_DOCUMENT_PATH` | `config/keys/current.json` | Static key document to serve. |
+| `ISSUER_PRIVATE_KEY_PATH` | `config/keys/current.pem` | Epoch signing key, PKCS#8 PEM. |
 | `RATE_LIMIT_MAX` | `60` | Requests per window, per `payment_ref`. |
 | `RATE_LIMIT_WINDOW_SECONDS` | `60` | Rate limit window length. |
 
@@ -97,8 +127,9 @@ Count is checked before format, so a request that is both over-count and malform
   payment references only: never request bodies, IPs, or per-purchase detail beyond
   `{payment_ref, epoch, bundle_count, timestamp}`.
 - **Redis** via BullMQ — background jobs (epoch rotation, reconciliation).
-- **Blind signatures** — `@cloudflare/blindrsa-ts`, suite `RSABSSA-SHA384-PSS-Randomized`
-  (added in M1.1; invariant I1 forbids any hand-rolled alternative).
+- **Blind signatures** — `@cloudflare/blindrsa-ts`, suite `RSABSSA-SHA384-PSS-Randomized`.
+  Invariant I1 forbids any hand-rolled alternative, so the library makes every ruling, including
+  whether a blinded blank is valid.
 - **Deployment** — Docker image on Nomad. Vault holds the epoch private keys.
 
 ## Local development
@@ -111,6 +142,7 @@ for `docker compose` below.
 podman compose up -d        # redis + postgres
 cp .env.example .env
 bun install
+bun run keys:dev            # throwaway epoch keypair, gitignored
 bun run dev                 # NestJS with watch on :3000
 ```
 
@@ -216,22 +248,25 @@ Publishing authenticates with the built-in `GITHUB_TOKEN` — no repository secr
 ## Layout
 
 ```
-├── package.json                bun workspaces (apps/*), root scripts
+├── package.json                bun workspaces (apps/*, packages/*), root scripts
 ├── tsconfig.base.json          shared strict TS config
 ├── compose.yml                 local backing services (redis, postgres)
 ├── compose.full.yml            the above plus the issuer in a container
-├── config/keys/current.json    static key document served by /v1/keys/current
+├── config/keys/                epoch key + key document, gitignored, mounted at runtime
 ├── scripts/scenario-report.ts  scope scenario coverage by milestone
 ├── .github/workflows/ci.yaml   test + publish image
 ├── docs/
 │   ├── issuer-mvp-scope.md     scope, invariants, BDD scenarios (spec of record)
-│   └── payment-claim.md        proposed proxy claim interface, pending TOON
+│   ├── payment-claim.md        proposed proxy claim interface, pending TOON
+│   └── buyer-harness.md        harness CLI, library API, conformance checks
+├── packages/buyer-harness/     headless buyer: library + CLI, TOON's conformance tool
 └── apps/backend/src/
     ├── bundles/                POST /v1/bundles, request validation
     ├── keys/                   GET /v1/keys/current, key document schema
     ├── issuance/               the I5 retention record, and nothing more
     ├── payment/                payment claim parsing, rate limiter
     ├── config/                 k and blob sizes
+    ├── signing/                RFC 9474 BlindSign under the epoch key
     ├── testing/                harness and the scope scenario coverage gate
     └── database/, queue/       Postgres and Redis wiring
 ```

@@ -1,0 +1,100 @@
+#!/usr/bin/env bun
+import { randomUUID } from 'node:crypto';
+import { parseArgs } from 'node:util';
+import { IssuerRequestError } from './client';
+import { failures } from './conformance';
+import { purchaseBundle } from './purchase';
+import { DEFAULT_BUNDLE_PARAMETERS } from './types';
+
+const EXIT_OK = 0;
+const EXIT_NONCONFORMING = 1;
+const EXIT_UNUSABLE = 2;
+
+const USAGE = `buyer-harness --url <issuer base url> [options]
+
+Buys one bundle and judges the response against the issuer contract.
+
+  --url <url>              issuer base URL (required)
+  --bundle-size <k>        credentials per bundle (default ${DEFAULT_BUNDLE_PARAMETERS.bundleSize})
+  --blank-size <bytes>     blinded blank size (default ${DEFAULT_BUNDLE_PARAMETERS.blankSizeBytes})
+  --signature-size <bytes> expected blob size (default ${DEFAULT_BUNDLE_PARAMETERS.signatureSizeBytes})
+  --epoch <id>             epoch to request (default: the issuer's current epoch)
+  --payment-ref <ref>      payment reference to claim (default: random)
+  --idempotency-key <key>  send an Idempotency-Key header
+  --json                   emit the report as JSON
+  --help
+
+Exit codes: ${EXIT_OK} conforming, ${EXIT_NONCONFORMING} nonconforming, ${EXIT_UNUSABLE} unusable (bad flags, issuer unreachable).`;
+
+function positiveInt(value: string | undefined, fallback: number, flag: string): number {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new TypeError(`${flag} must be a positive integer, got ${JSON.stringify(value)}`);
+  }
+  return parsed;
+}
+
+async function main(): Promise<number> {
+  const { values } = parseArgs({
+    options: {
+      url: { type: 'string' },
+      'bundle-size': { type: 'string' },
+      'blank-size': { type: 'string' },
+      'signature-size': { type: 'string' },
+      epoch: { type: 'string' },
+      'payment-ref': { type: 'string' },
+      'idempotency-key': { type: 'string' },
+      json: { type: 'boolean', default: false },
+      help: { type: 'boolean', default: false },
+    },
+    strict: true,
+  });
+
+  if (values.help) {
+    console.log(USAGE);
+    return EXIT_OK;
+  }
+  if (!values.url) {
+    console.error('missing --url\n');
+    console.error(USAGE);
+    return EXIT_UNUSABLE;
+  }
+
+  const result = await purchaseBundle({
+    baseUrl: values.url,
+    paymentRef: values['payment-ref'] ?? `harness-${randomUUID()}`,
+    idempotencyKey: values['idempotency-key'],
+    epoch: values.epoch,
+    parameters: {
+      bundleSize: positiveInt(values['bundle-size'], DEFAULT_BUNDLE_PARAMETERS.bundleSize, '--bundle-size'),
+      blankSizeBytes: positiveInt(values['blank-size'], DEFAULT_BUNDLE_PARAMETERS.blankSizeBytes, '--blank-size'),
+      signatureSizeBytes: positiveInt(values['signature-size'], DEFAULT_BUNDLE_PARAMETERS.signatureSizeBytes, '--signature-size'),
+    },
+  });
+
+  if (values.json) {
+    console.log(JSON.stringify({ epoch: result.epoch, conformance: result.conformance }, null, 2));
+  } else {
+    for (const check of result.conformance.checks) {
+      console.log(`${check.passed ? '✓' : '✗'} ${check.name}: ${check.detail}`);
+    }
+  }
+
+  if (result.conformance.passed) return EXIT_OK;
+
+  // Named on stderr so a failing run says which assertion broke without
+  // anyone having to parse the report.
+  console.error(`\nnonconforming issuer: ${failures(result.conformance).map((c) => c.name).join(', ')}`);
+  return EXIT_NONCONFORMING;
+}
+
+try {
+  process.exit(await main());
+} catch (error) {
+  if (error instanceof IssuerRequestError || error instanceof TypeError) {
+    console.error(String(error.message));
+    process.exit(EXIT_UNUSABLE);
+  }
+  throw error;
+}

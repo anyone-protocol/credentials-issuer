@@ -15,11 +15,11 @@ describe('request hygiene', () => {
   let harness: IssuerHarness;
 
   beforeAll(async () => {
-    harness = await startIssuer({ rateLimitMax: 3 });
+    harness = await startIssuer({ rateLimitMax: 3, bundleSize: 2 });
   });
   afterAll(() => harness.close());
 
-  const body = () => ({ epoch: '0', blinded_blanks: validBlanks(harness.config) });
+  const body = async () => ({ epoch: '0', blinded_blanks: await validBlanks(harness) });
 
   const issuanceCount = async (paymentRef: string): Promise<number> => {
     const rows = await harness.dataSource.query(
@@ -31,7 +31,7 @@ describe('request hygiene', () => {
 
   scenario('replayed idempotency key does not double-issue', async () => {
     const paymentRef = uniquePaymentRef();
-    const request = body();
+    const request = await body();
 
     const first = await postBundle(harness, request, { paymentRef, idempotencyKey: 'K' });
     expect(first.status).toBe(201);
@@ -49,14 +49,14 @@ describe('request hygiene', () => {
     const unaffected = uniquePaymentRef();
 
     for (let sent = 0; sent < harness.config.rateLimitMax; sent += 1) {
-      expect((await postBundle(harness, body(), { paymentRef: limited })).status).toBe(201);
+      expect((await postBundle(harness, await body(), { paymentRef: limited })).status).toBe(201);
     }
 
-    const blocked = await postBundle(harness, body(), { paymentRef: limited });
+    const blocked = await postBundle(harness, await body(), { paymentRef: limited });
     expect(blocked.status).toBe(429);
     expect(await errorCode(blocked)).toBe('RATE_LIMITED');
 
-    expect((await postBundle(harness, body(), { paymentRef: unaffected })).status).toBe(201);
+    expect((await postBundle(harness, await body(), { paymentRef: unaffected })).status).toBe(201);
   });
 
   // Not a scope scenario. Without this, reusing a key for a different request
@@ -64,8 +64,8 @@ describe('request hygiene', () => {
   it('rejects an idempotency key reused for a different request', async () => {
     const paymentRef = uniquePaymentRef();
 
-    await postBundle(harness, body(), { paymentRef, idempotencyKey: 'K' });
-    const conflicting = await postBundle(harness, body(), { paymentRef, idempotencyKey: 'K' });
+    await postBundle(harness, await body(), { paymentRef, idempotencyKey: 'K' });
+    const conflicting = await postBundle(harness, await body(), { paymentRef, idempotencyKey: 'K' });
 
     expect(conflicting.status).toBe(409);
     expect(await errorCode(conflicting)).toBe('IDEMPOTENCY_CONFLICT');

@@ -3,3 +3,4 @@ node_modules
 .git
 .github
 *.log
+config/keys

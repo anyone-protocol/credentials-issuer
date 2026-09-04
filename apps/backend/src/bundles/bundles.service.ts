@@ -1,15 +1,15 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash } from 'node:crypto';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { ISSUER_CONFIG, type IssuerConfig } from '../config/issuer.config';
 import { IssuerException } from '../errors/issuer.exception';
 import { IdempotencyRecord } from '../issuance/idempotency-record.entity';
 import { IssuanceRecord } from '../issuance/issuance-record.entity';
 import type { PaymentClaim } from '../payment/payment-claim';
 import { RateLimiter } from '../payment/rate-limiter.service';
+import { BlindSigner } from '../signing/blind-signer.service';
 import { validateBundleRequest, type BundleRequest } from './bundle-request';
-import { stubBlindSignature } from './stub-signing';
 
 export interface BundleResponse {
   readonly epoch: string;
@@ -30,6 +30,7 @@ export class BundlesService {
     @InjectRepository(IssuanceRecord) private readonly records: Repository<IssuanceRecord>,
     @InjectRepository(IdempotencyRecord) private readonly keys: Repository<IdempotencyRecord>,
     private readonly rateLimiter: RateLimiter,
+    private readonly signer: BlindSigner,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -44,50 +45,29 @@ export class BundlesService {
     }
 
     const request = validateBundleRequest(body, this.config);
+    const paymentRef = claim.payment_ref;
 
-    if (idempotencyKey) {
-      await this.claimKeyAndCount(claim.payment_ref, idempotencyKey, request);
-    } else {
-      await this.records.insert({
-        paymentRef: claim.payment_ref,
+    if (!idempotencyKey) {
+      return this.countAndSign((manager) => manager.insert(IssuanceRecord, {
+        paymentRef,
         epoch: request.epoch,
         bundleCount: 1,
-      });
+      }), request);
     }
 
-    return {
-      epoch: request.epoch,
-      // Deterministic, so a replay reproduces the original response without
-      // the issuer having stored it (I2, I5). See stub-signing.ts.
-      blind_signatures: request.blinded_blanks.map((blank) =>
-        stubBlindSignature(request.epoch, blank, this.config.signatureSizeBytes),
-      ),
-    };
-  }
-
-  /**
-   * Claims the idempotency key and counts the issuance in one transaction, so
-   * a crash between the two cannot leave a claimed key with no issuance. On
-   * replay the issuance is not counted a second time.
-   */
-  private async claimKeyAndCount(
-    paymentRef: string,
-    idempotencyKey: string,
-    request: BundleRequest,
-  ): Promise<void> {
     const fingerprint = fingerprintRequest(paymentRef, request);
-
     try {
-      await this.dataSource.transaction(async (manager) => {
+      return await this.countAndSign(async (manager) => {
         await manager.insert(IdempotencyRecord, {
           paymentRef,
           idempotencyKey,
           requestFingerprint: fingerprint,
         });
         await manager.insert(IssuanceRecord, { paymentRef, epoch: request.epoch, bundleCount: 1 });
-      });
-      return;
+      }, request);
     } catch (error) {
+      // Only a claimed key means replay. A signing failure, or anything else,
+      // propagates with the transaction already rolled back.
       if (!isUniqueViolation(error)) throw error;
     }
 
@@ -100,6 +80,33 @@ export class BundlesService {
         'idempotency key was already used for a different request',
       );
     }
+    // Replay: BlindSign is deterministic, so re-signing reproduces the original
+    // response and the issuer never had to store one (I2, I5).
+    return this.signBundle(request);
+  }
+
+  /**
+   * Records the issuance and signs in one transaction. Signing inside it is
+   * what stops a signing failure leaving a counted purchase behind: the buyer
+   * would have been charged for credentials that were never issued.
+   */
+  private countAndSign(
+    record: (manager: EntityManager) => Promise<unknown>,
+    request: BundleRequest,
+  ): Promise<BundleResponse> {
+    return this.dataSource.transaction(async (manager) => {
+      await record(manager);
+      return this.signBundle(request);
+    });
+  }
+
+  private async signBundle(request: BundleRequest): Promise<BundleResponse> {
+    return {
+      epoch: request.epoch,
+      blind_signatures: await Promise.all(
+        request.blinded_blanks.map((blank) => this.signer.signBlindedBlank(blank)),
+      ),
+    };
   }
 }
 

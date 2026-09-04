@@ -3,14 +3,14 @@ import { join } from 'node:path';
 
 export const REPO_ROOT = join(import.meta.dir, '../../../..');
 export const SCOPE_DOC = join(REPO_ROOT, 'docs/issuer-mvp-scope.md');
-const SPEC_ROOT = join(REPO_ROOT, 'apps/backend/src');
+const SPEC_ROOTS = [join(REPO_ROOT, 'apps/backend/src'), join(REPO_ROOT, 'packages')];
 
 /**
  * Milestones whose scenarios must be green in CI. Flip a milestone on in the
  * same commit that lands it; until then its scenarios are reported but not
  * enforced, so unbuilt scope never blocks the build.
  */
-export const IMPLEMENTED_MILESTONES = new Set(['M0.1', 'M0.2']);
+export const IMPLEMENTED_MILESTONES = new Set(['M0.1', 'M0.2', 'M0.4']);
 
 export interface ScopeScenario {
   readonly milestone: string;
@@ -46,9 +46,14 @@ export async function readScopeScenarios(): Promise<ScopeScenario[]> {
 /** Names passed to scenario() across the suite, found by source scan so the
  *  result does not depend on which spec files a given test run imports. */
 export async function readImplementedScenarioNames(): Promise<Set<string>> {
-  const files = (await readdir(SPEC_ROOT, { recursive: true }))
-    .filter((f) => f.endsWith('.spec.ts') && !f.endsWith('scenario-coverage.spec.ts'))
-    .map((f) => join(SPEC_ROOT, f));
+  const files: string[] = [];
+  for (const root of SPEC_ROOTS) {
+    for (const found of await readdir(root, { recursive: true })) {
+      if (found.endsWith('.spec.ts') && !found.endsWith('scenario-coverage.spec.ts')) {
+        files.push(join(root, found));
+      }
+    }
+  }
 
   const names = new Set<string>();
   for (const file of files) {

@@ -6,6 +6,8 @@ export interface IssuerConfig {
   readonly blankSizeBytes: number;
   readonly signatureSizeBytes: number;
   readonly keyDocumentPath: string;
+  /** Epoch signing key, PKCS#8 PEM. Sourced from Vault from M1.2. */
+  readonly privateKeyPath: string;
   /** Requests per window, per payment_ref. Never per IP (I5). */
   readonly rateLimitMax: number;
   readonly rateLimitWindowSeconds: number;
@@ -26,6 +28,7 @@ export function loadIssuerConfig(env: NodeJS.ProcessEnv = process.env): IssuerCo
     blankSizeBytes: positiveInt(env.BLANK_SIZE_BYTES, 256, 'BLANK_SIZE_BYTES'),
     signatureSizeBytes: positiveInt(env.SIGNATURE_SIZE_BYTES, 256, 'SIGNATURE_SIZE_BYTES'),
     keyDocumentPath: env.KEY_DOCUMENT_PATH ?? 'config/keys/current.json',
+    privateKeyPath: env.ISSUER_PRIVATE_KEY_PATH ?? 'config/keys/current.pem',
     rateLimitMax: positiveInt(env.RATE_LIMIT_MAX, 60, 'RATE_LIMIT_MAX'),
     rateLimitWindowSeconds: positiveInt(env.RATE_LIMIT_WINDOW_SECONDS, 60, 'RATE_LIMIT_WINDOW_SECONDS'),
   };

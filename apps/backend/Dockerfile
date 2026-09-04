@@ -5,10 +5,12 @@ ENV NODE_ENV=production
 # Every workspace package.json must be present for a workspace-aware install.
 COPY package.json bun.lock ./
 COPY apps/backend/package.json ./apps/backend/
+# Manifest only: the workspace graph must resolve, but the harness is a
+# separate tool and its sources do not belong in the issuer image.
+COPY packages/buyer-harness/package.json ./packages/buyer-harness/
 RUN bun install --frozen-lockfile --production
 
 COPY tsconfig.json tsconfig.base.json ./
-COPY config ./config
 COPY apps/backend ./apps/backend
 
 EXPOSE 3000

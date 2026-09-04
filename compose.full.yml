@@ -19,6 +19,13 @@ services:
       POSTGRES_DB: app
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      KEY_DOCUMENT_PATH: /keys/current.json
+      ISSUER_PRIVATE_KEY_PATH: /keys/current.pem
+    # Epoch keys are mounted, never baked into the image. Run `bun run keys:dev`
+    # first; stage and live mount Vault-issued keys here instead.
+    volumes:
+      # :z relabels for SELinux hosts (podman on Fedora); harmless elsewhere.
+      - ./config/keys:/keys:ro,z
     ports:
       - "3000:3000"
     depends_on:

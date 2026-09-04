@@ -1,0 +1,15 @@
+{
+  "name": "@anyone-protocol/buyer-harness",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "bin": {
+    "buyer-harness": "src/cli.ts"
+  },
+  "scripts": {
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@cloudflare/blindrsa-ts": "^0.4.6"
+  }
+}
