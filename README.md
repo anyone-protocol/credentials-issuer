@@ -12,11 +12,10 @@ non-negotiable.
 
 ## Status
 
-M0.1, M0.2, M0.4, M1.1, M1.3 and M1.4 complete. Issuance is **real**: the issuer blind-signs under an
+M0.1, M0.2, M0.4 and all of M1 complete. Issuance is **real**: the issuer blind-signs under an
 epoch RSA key with `@cloudflare/blindrsa-ts`, the harness blinds, unblinds and verifies, the
 published test vectors cross-verify against CIRCL, and the proxy's payment claim must carry a valid
-`proxy_sig` and the right amount. Per-epoch counters reconcile on a schedule and raise an alarm on divergence. Still missing: epoch
-keys are files rather than Vault-managed and never rotate (M1.2), and **a valid claim can be
+`proxy_sig` and the right amount. Per-epoch counters reconcile on a schedule and raise an alarm on divergence. Epoch keys rotate with a grace window and no restart. Still missing: **a valid claim can be
 replayed for more bundles** (see [docs/payment-claim.md](docs/payment-claim.md)). Do not expose
 this outside the sandbox.
 
@@ -26,7 +25,7 @@ this outside the sandbox.
 | `POST /v1/bundles` | M0.1, M0.2, M1.1 | live, real RFC 9474 blind signatures |
 | `GET /v1/keys/current` | M0.1 | live, static file (Vault-backed epoch keys land in M1.2) |
 
-Next: M1.2 (epoch key lifecycle in Vault) and M0.3 (sandbox deployment behind the TOON proxy).
+Next: M0.3 (sandbox deployment behind the TOON proxy), then M2.
 
 ## API
 
@@ -60,48 +59,54 @@ At boot the issuer validates the document, loads the epoch signing key, and chec
 match. Publishing a pubkey that cannot verify our own signatures is worse than not starting, so a
 mismatch stops startup.
 
-## Epoch keys
+## Epoch keys and rotation
 
-The signing key is a PKCS#8 PEM at `ISSUER_PRIVATE_KEY_PATH`, and the key document at
-`KEY_DOCUMENT_PATH` publishes its public half. The proxy's Ed25519 **public** key sits alongside at
-`PROXY_PUBLIC_KEY_PATH`; the issuer only verifies with it and never holds the proxy's private key. Neither is committed and neither is baked into the
-image: the container mounts them at runtime, and from M1.2 they come from Vault.
+Signing keys live in a **keyring** at `KEYRING_PATH`: every usable epoch, its published document,
+and its private key. One file, because a Nomad template renders one file atomically; split across
+several, a rotation could be seen half-applied.
 
-For local work, generate a throwaway pair:
+The issuer re-reads it every `KEYRING_RELOAD_SECONDS` and swaps the keys in place, so **rotation
+needs no restart**. Deploy it with `change_mode = "noop"` on the template stanza. Keeping Vault
+behind a file this way means no Vault client in the service, tests that use plain files, and
+issuance that survives Vault being unreachable, since the last render is on disk.
+
+Reload is eventually consistent, and the grace window is exactly the tolerance that makes that
+harmless: the outgoing key still signs while the new one lands.
+
+### Grace, and WRONG_EPOCH
+
+A rotated-out epoch stays signable until its `not_after`, which rotation moves to `now + grace`. So
+the grace window lives in the keyring rather than in the issuer's configuration, and a buyer who
+read the key document moments before a rotation is not stranded. Past that, a bundle naming it gets
+`WRONG_EPOCH` and nothing is signed.
+
+### Integrity
+
+Every epoch document carries `root_sig`, an Ed25519 signature by the issuer root key, and the
+issuer verifies **all** of them on load, not just the current one: an edited entry would otherwise
+let a forged key sign credentials. A keyring that fails at boot stops startup; one that fails on
+reload is refused and the previously loaded keys keep signing, so a bad rotation cannot take
+issuance down mid-flight.
+
+`root_sig` is a placeholder for dirauth consensus signing.
+
+### Rotating
+
+The root private key is **never** given to the issuer. Only the rotation tool holds it, so a
+compromised issuer can abuse the current epoch key but cannot mint epochs or forge a key document.
 
 ```sh
-bun run keys:dev          # writes config/keys/current.pem + current.json, both gitignored
+bun run keys:dev            # dev: root key, a one-epoch keyring, and a stand-in proxy key
+bun run rotate-epoch        # advance the epoch, retiring the previous one into its grace window
+  --keyring config/keys/keyring.json --root-key config/keys/root.pem
+  --epoch-seconds 2592000 --grace-seconds 86400
 ```
 
-The test suite generates them on first run, so a fresh clone needs no extra step.
+Rotation is operator-driven today. The intent is a Nomad periodic batch job with a write-capable
+Vault role, which is also why it is a separate tool rather than a job inside the issuer: one runner
+by construction, so no distributed lock, and the issuer's Vault policy stays read-only.
 
-### Typed errors
-
-All errors return `{ "error": { "code": ..., "message": ... } }`.
-
-| Code | Status | Cause |
-| ---- | ------ | ----- |
-| `REQUEST_INVALID` | 400 | Body is not an object, or `epoch` is missing. Not a scope-defined code, see [docs/payment-claim.md](docs/payment-claim.md). |
-| `BUNDLE_SIZE` | 400 | `blinded_blanks` length is not `k`. |
-| `BLANK_FORMAT` | 400 | A blank is not base64, does not decode to the configured blank size, or is not a valid blinded message for the epoch key. |
-| `CLAIM_INVALID` | 402 | Payment claim missing, malformed, badly signed, or claiming the wrong amount. |
-| `IDEMPOTENCY_CONFLICT` | 409 | `Idempotency-Key` reused for a different request. Not a scope-defined code. |
-| `RATE_LIMITED` | 429 | Too many requests for this `payment_ref`. |
-
-Count is checked before format, so a request that is both over-count and malformed reports
-`BUNDLE_SIZE`.
-
-## For the TOON proxy team
-
-[docs/toon-runbook.md](docs/toon-runbook.md) is the starting point: run the published image, drive a
-purchase, and read the two interfaces the proxy implements. It ends with the open questions we need
-answered, which are easier to judge having seen the runtime.
-
-```sh
-bun run keys:dev
-docker compose -f compose.published.yml up        # pulls the image, nothing is built
-bun run harness --url http://localhost:3000 --proxy-key config/keys/proxy.pem
-```
+Nothing here is committed. `config/keys/` is gitignored.
 
 ## Buyer harness
 
@@ -129,8 +134,8 @@ could not happen at all. Full flag list, library API and the M1.1 upgrade path a
 | `BUNDLE_SIZE` | `10` | `k`, credentials per bundle. Placeholder pending 0.3. |
 | `BLANK_SIZE_BYTES` | `256` | Expected decoded size of each blinded blank (RSA-2048). |
 | `SIGNATURE_SIZE_BYTES` | `256` | Size of each returned blob (RSA-2048). |
-| `KEY_DOCUMENT_PATH` | `config/keys/current.json` | Static key document to serve. |
-| `ISSUER_PRIVATE_KEY_PATH` | `config/keys/current.pem` | Epoch signing key, PKCS#8 PEM. |
+| `KEYRING_PATH` | `config/keys/keyring.json` | Epoch keyring, rendered from Vault. |
+| `KEYRING_RELOAD_SECONDS` | `30` | How often the keyring is re-read for rotations. |
 | `PROXY_PUBLIC_KEY_PATH` | `config/keys/proxy.pub.pem` | Proxy's Ed25519 public key, SPKI PEM. |
 | `BUNDLE_PRICE` | `1.00` | Price of one bundle, exact decimal. |
 | `RECONCILIATION_INTERVAL_SECONDS` | `60` | How often the reconciliation cycle runs. |

@@ -1,0 +1,47 @@
+import { base64ToBytes } from './bytes';
+import { canonicalKeyDocument } from './keyring';
+import type { KeyDocument } from './key-document';
+import { spkiPemToDer, pkcs8PemToDer } from './pem';
+
+/** The issuer root key. A placeholder for dirauth consensus signing (M1.2). */
+export const ROOT_KEY_ALGORITHM = 'Ed25519';
+
+export function importRootSigningKey(pem: string): Promise<CryptoKey> {
+  return crypto.subtle.importKey('pkcs8', pkcs8PemToDer(pem), { name: ROOT_KEY_ALGORITHM }, true, [
+    'sign',
+  ]);
+}
+
+export function importRootPublicKeyFromPem(pem: string): Promise<CryptoKey> {
+  return crypto.subtle.importKey('spki', spkiPemToDer(pem), { name: ROOT_KEY_ALGORITHM }, true, [
+    'verify',
+  ]);
+}
+
+export function importRootPublicKey(spkiBase64: string): Promise<CryptoKey> {
+  return crypto.subtle.importKey('spki', base64ToBytes(spkiBase64), { name: ROOT_KEY_ALGORITHM }, true, [
+    'verify',
+  ]);
+}
+
+export async function signKeyDocument(document: KeyDocument, rootKey: CryptoKey): Promise<string> {
+  const signature = await crypto.subtle.sign(
+    { name: ROOT_KEY_ALGORITHM },
+    rootKey,
+    canonicalKeyDocument(document),
+  );
+  return Buffer.from(signature).toString('base64url');
+}
+
+export function verifyKeyDocument(
+  document: KeyDocument,
+  rootSig: string,
+  rootPublicKey: CryptoKey,
+): Promise<boolean> {
+  return crypto.subtle.verify(
+    { name: ROOT_KEY_ALGORITHM },
+    rootPublicKey,
+    base64ToBytes(Buffer.from(rootSig, 'base64url').toString('base64')),
+    canonicalKeyDocument(document),
+  );
+}

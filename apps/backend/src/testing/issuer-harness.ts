@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { DataSource } from 'typeorm';
 import { readFile } from 'node:fs/promises';
-import { DEV_PROXY_KEY_PEM, ensureDevKeys } from '../../../../scripts/generate-dev-keys';
+import { DEV_KEYRING, DEV_PROXY_KEY_PEM, DEV_ROOT_KEY, ensureDevKeys } from '../../../../scripts/generate-dev-keys';
 import {
   importProxySigningKey,
   signPaymentClaim,
@@ -42,8 +42,7 @@ export async function startIssuer(
   // Dev keys are gitignored, so generate them on first run rather than making
   // `bun test` fail on a fresh clone.
   await ensureDevKeys();
-  process.env.KEY_DOCUMENT_PATH ??= join(REPO_ROOT, 'config/keys/current.json');
-  process.env.ISSUER_PRIVATE_KEY_PATH ??= join(REPO_ROOT, 'config/keys/current.pem');
+  process.env.KEYRING_PATH ??= DEV_KEYRING;
 
   // Overridden via DI rather than process.env, which would leak between the
   // spec files bun runs in one process.
@@ -147,3 +146,5 @@ export async function errorCode(response: Response): Promise<string> {
   const body = (await response.json()) as { error?: { code?: string } };
   return body.error?.code ?? '<no error code in body>';
 }
+
+export { DEV_KEYRING, DEV_ROOT_KEY };

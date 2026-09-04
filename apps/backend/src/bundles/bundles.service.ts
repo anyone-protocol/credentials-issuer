@@ -11,6 +11,7 @@ import { ClaimRejections } from '../payment/claim-rejections.service';
 import { ClaimRejected, ClaimVerifier } from '../payment/claim-verifier.service';
 import { parsePaymentClaim, type PaymentClaim } from '../payment/payment-claim';
 import { RateLimiter } from '../payment/rate-limiter.service';
+import { KeysService } from '../keys/keys.service';
 import { BlindSigner } from '../signing/blind-signer.service';
 import { validateBundleRequest, type BundleRequest } from './bundle-request';
 
@@ -37,6 +38,7 @@ export class BundlesService {
     private readonly claims: ClaimVerifier,
     private readonly rejections: ClaimRejections,
     private readonly epochCounters: EpochCounters,
+    private readonly keyring: KeysService,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -54,6 +56,15 @@ export class BundlesService {
     }
 
     const request = validateBundleRequest(body, this.config);
+
+    // Checked before signing, so an epoch past its grace window signs nothing.
+    if (!this.keyring.usable(request.epoch)) {
+      throw new IssuerException(
+        'WRONG_EPOCH',
+        `epoch ${request.epoch} is not currently signable`,
+      );
+    }
+
     const paymentRef = claim.payment_ref;
 
     // Signed before the transaction opens. Blind signing is CPU-bound, and
@@ -150,7 +161,7 @@ export class BundlesService {
     return {
       epoch: request.epoch,
       blind_signatures: await Promise.all(
-        request.blinded_blanks.map((blank) => this.signer.signBlindedBlank(blank)),
+        request.blinded_blanks.map((blank) => this.signer.signBlindedBlank(request.epoch, blank)),
       ),
     };
   }

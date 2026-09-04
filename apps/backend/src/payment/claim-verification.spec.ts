@@ -42,7 +42,7 @@ describe('payment claim verification', () => {
 
     const response = await postBundle(
       harness,
-      { epoch: '0', blinded_blanks: await validBlanks(harness) },
+      { epoch: harness.keyDocument.epoch_id, blinded_blanks: await validBlanks(harness) },
       { paymentRef },
     );
 
@@ -77,7 +77,7 @@ describe('payment claim verification', () => {
 
       const response = await postBundle(
         harness,
-        { epoch: '0', blinded_blanks: await validBlanks(harness) },
+        { epoch: harness.keyDocument.epoch_id, blinded_blanks: await validBlanks(harness) },
         testCase.claim
           ? { claim: testCase.claim }
           : { paymentRef, amount: testCase.amount },
@@ -102,7 +102,7 @@ describe('payment claim verification', () => {
 
     const response = await postBundle(
       harness,
-      { epoch: '0', blinded_blanks: await validBlanks(harness) },
+      { epoch: harness.keyDocument.epoch_id, blinded_blanks: await validBlanks(harness) },
       { claim: unsigned },
     );
 
@@ -116,7 +116,7 @@ describe('payment claim verification', () => {
 
     const response = await postBundle(
       harness,
-      { epoch: '0', blinded_blanks: await validBlanks(harness) },
+      { epoch: harness.keyDocument.epoch_id, blinded_blanks: await validBlanks(harness) },
       { claim },
     );
 

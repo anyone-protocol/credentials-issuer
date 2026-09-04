@@ -36,13 +36,17 @@ describe('published test vectors', () => {
 
     for (const vector of file.vectors) {
       // One pool per vector: each carries its own key.
-      const pool = new SignerPool(
-        testIssuerConfig({ signingWorkers: 1 }),
-        {
-          epochSigningKeyPem: () =>
-            derToPkcs8Pem(Buffer.from(vector.private_key_pkcs8, 'hex').buffer as ArrayBuffer),
-        } as never,
-      );
+      const pool = new SignerPool(testIssuerConfig({ signingWorkers: 1 }), {
+        keyMaterial: () => [
+          {
+            epoch: 'vector',
+            privateKeyPem: derToPkcs8Pem(
+              Buffer.from(vector.private_key_pkcs8, 'hex').buffer as ArrayBuffer,
+            ),
+          },
+        ],
+        onKeysChanged: () => {},
+      } as never);
       pools.push(pool);
       const publicKey = await crypto.subtle.importKey(
         'spki', hex(vector.public_key_spki), KEY_ALGORITHM, true, ['verify'],
@@ -51,7 +55,7 @@ describe('published test vectors', () => {
       // Through the pool the service signs with, on a real worker thread, so
       // this pins what the service actually does rather than what the library
       // can do.
-      const blindSig = await pool.sign(Buffer.from(vector.blinded_msg, 'hex').toString('base64'));
+      const blindSig = await pool.sign('vector', Buffer.from(vector.blinded_msg, 'hex').toString('base64'));
       expect(Buffer.from(blindSig, 'base64').toString('hex')).toBe(vector.blind_sig);
 
       expect(await suite.verify(publicKey, hex(vector.sig), hex(vector.prepared_msg))).toBe(true);

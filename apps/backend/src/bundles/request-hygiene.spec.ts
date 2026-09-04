@@ -19,7 +19,7 @@ describe('request hygiene', () => {
   });
   afterAll(() => harness.close());
 
-  const body = async () => ({ epoch: '0', blinded_blanks: await validBlanks(harness) });
+  const body = async () => ({ epoch: harness.keyDocument.epoch_id, blinded_blanks: await validBlanks(harness) });
 
   const issuanceCount = async (paymentRef: string): Promise<number> => {
     const rows = await harness.dataSource.query(

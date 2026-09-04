@@ -29,13 +29,13 @@ describe('POST /v1/bundles', () => {
     const paymentRef = uniquePaymentRef();
     const response = await postBundle(
       harness,
-      { epoch: '0', blinded_blanks: await validBlanks(harness) },
+      { epoch: harness.keyDocument.epoch_id, blinded_blanks: await validBlanks(harness) },
       { paymentRef },
     );
 
     expect(response.status).toBe(201);
     const body = (await response.json()) as { epoch: string; blind_signatures: string[] };
-    expect(body.epoch).toBe('0');
+    expect(body.epoch).toBe(harness.keyDocument.epoch_id);
     expect(body.blind_signatures).toHaveLength(config.bundleSize);
     for (const signature of body.blind_signatures) {
       expect(Buffer.from(signature, 'base64').byteLength).toBe(config.signatureSizeBytes);
@@ -53,14 +53,14 @@ describe('POST /v1/bundles', () => {
 
     const rows = await harness.dataSource.query('SELECT * FROM issuance_record');
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ payment_ref: paymentRef, epoch: '0', bundle_count: 1 });
+    expect(rows[0]).toMatchObject({ payment_ref: paymentRef, epoch: harness.keyDocument.epoch_id, bundle_count: 1 });
   });
 
   scenario('over-count bundle is rejected', async () => {
     const { config } = harness;
 
     const response = await postBundle(harness, {
-      epoch: '0',
+      epoch: harness.keyDocument.epoch_id,
       blinded_blanks: await validBlanks(harness, config.bundleSize + 1),
     });
 
@@ -78,7 +78,7 @@ describe('POST /v1/bundles', () => {
       const blanks = await validBlanks(harness);
       blanks[config.bundleSize - 1] = blank;
 
-      const response = await postBundle(harness, { epoch: '0', blinded_blanks: blanks });
+      const response = await postBundle(harness, { epoch: harness.keyDocument.epoch_id, blinded_blanks: blanks });
 
       expect(response.status).toBe(400);
       expect(await errorCode(response)).toBe('BLANK_FORMAT');
@@ -91,7 +91,7 @@ describe('POST /v1/bundles', () => {
   // than a 500.
   it('rejects a correctly sized blank that is not a valid blinded message', async () => {
     const response = await postBundle(harness, {
-      epoch: '0',
+      epoch: harness.keyDocument.epoch_id,
       blinded_blanks: outOfRangeBlanks(harness.config),
     });
 
@@ -105,7 +105,7 @@ describe('POST /v1/bundles', () => {
   it('rejects a request carrying no payment claim', async () => {
     const response = await postBundle(
       harness,
-      { epoch: '0', blinded_blanks: await validBlanks(harness) },
+      { epoch: harness.keyDocument.epoch_id, blinded_blanks: await validBlanks(harness) },
       { paymentRef: null },
     );
 

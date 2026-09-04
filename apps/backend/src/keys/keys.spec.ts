@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect } from 'bun:test';
 import { scenario } from '../testing/scenario';
 import { startIssuer, type IssuerHarness } from '../testing/issuer-harness';
-import { BLIND_SIGNATURE_SUITE, KEY_DOCUMENT_FIELDS } from './key-document';
+import { BLIND_SIGNATURE_SUITE } from './key-document';
+import { KEY_DOCUMENT_FIELDS } from './keyring';
 
 describe('GET /v1/keys/current', () => {
   let harness: IssuerHarness;
@@ -17,9 +18,9 @@ describe('GET /v1/keys/current', () => {
     expect(response.status).toBe(200);
     const doc = (await response.json()) as Record<string, string>;
 
-    // "Then the response matches the 0.3 consensus-publication schema" — pinned
-    // to the field list the scope doc states for M1.2, minus root_sig which
-    // M1.2 adds. Recheck when the real 0.3 schema lands.
+    // "Then the response matches the 0.3 consensus-publication schema" — the
+    // full field list the scope doc states for M1.2, root_sig included.
+    // Recheck when the real 0.3 schema lands.
     expect(Object.keys(doc).sort()).toEqual([...KEY_DOCUMENT_FIELDS].sort());
 
     // "And includes epoch_id, validity window, alg, and pubkey"
@@ -27,5 +28,8 @@ describe('GET /v1/keys/current', () => {
     expect(Date.parse(doc.not_before!)).toBeLessThan(Date.parse(doc.not_after!));
     expect(doc.alg).toBe(BLIND_SIGNATURE_SUITE);
     expect(Buffer.from(doc.pubkey!, 'base64').byteLength).toBeGreaterThan(0);
+
+    // No private material may ever reach the published document.
+    expect(JSON.stringify(doc)).not.toContain('PRIVATE');
   });
 });

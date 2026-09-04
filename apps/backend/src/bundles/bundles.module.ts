@@ -7,12 +7,13 @@ import { IssuanceRecord } from '../issuance/issuance-record.entity';
 import { ClaimRejections } from '../payment/claim-rejections.service';
 import { ClaimVerifier } from '../payment/claim-verifier.service';
 import { RateLimiter } from '../payment/rate-limiter.service';
+import { KeysModule } from '../keys/keys.module';
 import { SigningModule } from '../signing/signing.module';
 import { BundlesController } from './bundles.controller';
 import { BundlesService } from './bundles.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([IssuanceRecord, IdempotencyRecord, ClaimRejection]), SigningModule, AccountingModule],
+  imports: [TypeOrmModule.forFeature([IssuanceRecord, IdempotencyRecord, ClaimRejection]), SigningModule, AccountingModule, KeysModule],
   controllers: [BundlesController],
   providers: [BundlesService, RateLimiter, ClaimVerifier, ClaimRejections],
 })

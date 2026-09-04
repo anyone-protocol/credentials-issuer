@@ -28,9 +28,9 @@ export class BlindSigner {
    * Signs one blinded blank. Input and output are base64; the bytes are passed
    * straight to the library and are never inspected, logged or stored (I2).
    */
-  async signBlindedBlank(blindedBlankBase64: string): Promise<string> {
+  async signBlindedBlank(epoch: string, blindedBlankBase64: string): Promise<string> {
     try {
-      return await this.pool.sign(blindedBlankBase64);
+      return await this.pool.sign(epoch, blindedBlankBase64);
     } catch (error) {
       // A blank of the right length can still be an invalid blinded message:
       // RFC 9474 requires it to be less than the modulus. That is the client's

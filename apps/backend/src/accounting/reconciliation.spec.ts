@@ -36,7 +36,7 @@ describe('aggregate accounting', () => {
   });
 
   scenario('reconciliation is exact over a scripted run', async () => {
-    const epoch = '0';
+    const epoch = harness.keyDocument.epoch_id;
     // One valid blinded bundle reused across purchases: BlindSign is
     // deterministic and takes no view of freshness, so this measures the
     // accounting rather than the client's blinding throughput.

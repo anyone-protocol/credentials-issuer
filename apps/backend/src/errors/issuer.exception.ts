@@ -6,7 +6,8 @@ export type IssuerErrorCode =
   | 'BLANK_FORMAT'
   | 'CLAIM_INVALID'
   | 'IDEMPOTENCY_CONFLICT'
-  | 'RATE_LIMITED';
+  | 'RATE_LIMITED'
+  | 'WRONG_EPOCH';
 
 const STATUS: Record<IssuerErrorCode, HttpStatus> = {
   REQUEST_INVALID: HttpStatus.BAD_REQUEST,
@@ -15,6 +16,7 @@ const STATUS: Record<IssuerErrorCode, HttpStatus> = {
   CLAIM_INVALID: HttpStatus.PAYMENT_REQUIRED,
   IDEMPOTENCY_CONFLICT: HttpStatus.CONFLICT,
   RATE_LIMITED: HttpStatus.TOO_MANY_REQUESTS,
+  WRONG_EPOCH: HttpStatus.BAD_REQUEST,
 };
 
 // Messages are written by hand and must never quote request payload bytes (I2).

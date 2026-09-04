@@ -3,7 +3,7 @@ import { Worker } from 'node:worker_threads';
 import { ISSUER_CONFIG, type IssuerConfig } from '../config/issuer.config';
 import { importPrivateKey } from '../keys/epoch-key';
 import { KeysService } from '../keys/keys.service';
-import type { SignReply } from './blind-sign.worker';
+import type { EpochKey, SignReply } from './blind-sign.worker';
 import { base64ToBytes, bytesToBase64 } from '../keys/bytes';
 import { selectSigningSuite, type SuiteSelection } from './suite';
 
@@ -40,7 +40,7 @@ export class SignerPool implements OnModuleInit, OnModuleDestroy {
   private readonly waiting: ((slot: Slot) => void)[] = [];
   private started?: Promise<void>;
   private selection?: SuiteSelection;
-  private inlineKey?: Promise<CryptoKey>;
+  private inlineKeys = new Map<string, Promise<CryptoKey>>();
   private shuttingDown = false;
   private nextId = 0;
 
@@ -55,6 +55,11 @@ export class SignerPool implements OnModuleInit, OnModuleDestroy {
    * their own realm.
    */
   async onModuleInit(): Promise<void> {
+    this.adoptKeys(this.keys.keyMaterial());
+    // A rotation updates the workers in place rather than respawning them,
+    // which would drop in-flight work and re-pay startup on every rotation.
+    this.keys.onKeysChanged((material) => this.adoptKeys(material));
+
     this.selection = await selectSigningSuite(this.config.useNativeRsa);
     const { fastPath, reason } = this.selection;
     const where = this.inlineMode
@@ -77,13 +82,26 @@ export class SignerPool implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private epochKeys(): EpochKey[] {
+    return this.keys.keyMaterial().map((key) => ({ epoch: key.epoch, privateKeyPem: key.privateKeyPem }));
+  }
+
+  private adoptKeys(material: readonly { epoch: string; privateKeyPem: string }[]): void {
+    this.inlineKeys = new Map(
+      material.map((key) => [key.epoch, importPrivateKey(key.privateKeyPem)]),
+    );
+    for (const slot of this.slots) {
+      if (slot.alive) slot.worker.postMessage({ kind: 'keys', keys: material });
+    }
+  }
+
   /** Signing runs on the caller's thread; no worker_threads are used at all. */
   private get inlineMode(): boolean {
     return this.config.signingWorkers === 0;
   }
 
-  async sign(blindedBlank: string): Promise<string> {
-    if (this.inlineMode) return this.signInline(blindedBlank);
+  async sign(epoch: string, blindedBlank: string): Promise<string> {
+    if (this.inlineMode) return this.signInline(epoch, blindedBlank);
 
     await this.ensureStarted();
     const slot = await this.acquire();
@@ -100,7 +118,7 @@ export class SignerPool implements OnModuleInit, OnModuleDestroy {
           // request: replacing it stops one wedged thread eating the pool.
           this.retire(slot, 'timed out');
         }, this.config.signingTimeoutMs);
-        slot.worker.postMessage({ id, blindedBlank });
+        slot.worker.postMessage({ kind: 'sign', id, epoch, blindedBlank });
       });
     } finally {
       clearTimeout(timer);
@@ -112,16 +130,12 @@ export class SignerPool implements OnModuleInit, OnModuleDestroy {
    * No timeout here: the work is synchronous CPU on this thread, so there is
    * nothing a timer could interrupt. That is the trade for having no threads.
    */
-  private async signInline(blindedBlank: string): Promise<string> {
+  private async signInline(epoch: string, blindedBlank: string): Promise<string> {
     if (!this.selection) throw new Error('signing suite not selected');
-    // Imported from the PEM, exactly as a worker does, so the pool depends on
-    // one thing from KeysService whichever mode it runs in.
-    this.inlineKey ??= importPrivateKey(this.keys.epochSigningKeyPem());
+    const key = this.inlineKeys.get(epoch);
+    if (!key) throw new Error(`no signing key for epoch ${epoch}`);
 
-    const signature = await this.selection.suite.blindSign(
-      await this.inlineKey,
-      base64ToBytes(blindedBlank),
-    );
+    const signature = await this.selection.suite.blindSign(await key, base64ToBytes(blindedBlank));
     return bytesToBase64(signature);
   }
 
@@ -143,7 +157,7 @@ export class SignerPool implements OnModuleInit, OnModuleDestroy {
 
   private spawn(): void {
     const worker = new Worker(WORKER_URL, {
-      workerData: { privateKeyPem: this.keys.epochSigningKeyPem(), useNativeRsa: this.config.useNativeRsa },
+      workerData: { keys: this.epochKeys(), useNativeRsa: this.config.useNativeRsa },
     });
     const slot: Slot = { worker, alive: true };
 

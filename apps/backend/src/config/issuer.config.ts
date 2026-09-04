@@ -5,9 +5,9 @@ export interface IssuerConfig {
   readonly bundleSize: number;
   readonly blankSizeBytes: number;
   readonly signatureSizeBytes: number;
-  readonly keyDocumentPath: string;
-  /** Epoch signing key, PKCS#8 PEM. Sourced from Vault from M1.2. */
-  readonly privateKeyPath: string;
+  /** Epoch keyring. Rendered from Vault by a Nomad template; see README. */
+  readonly keyringPath: string;
+  readonly keyringReloadSeconds: number;
   /** Requests per window, per payment_ref. Never per IP (I5). */
   readonly rateLimitMax: number;
   readonly rateLimitWindowSeconds: number;
@@ -47,8 +47,8 @@ export function loadIssuerConfig(env: NodeJS.ProcessEnv = process.env): IssuerCo
     bundleSize: positiveInt(env.BUNDLE_SIZE, 10, 'BUNDLE_SIZE'),
     blankSizeBytes: positiveInt(env.BLANK_SIZE_BYTES, 256, 'BLANK_SIZE_BYTES'),
     signatureSizeBytes: positiveInt(env.SIGNATURE_SIZE_BYTES, 256, 'SIGNATURE_SIZE_BYTES'),
-    keyDocumentPath: env.KEY_DOCUMENT_PATH ?? 'config/keys/current.json',
-    privateKeyPath: env.ISSUER_PRIVATE_KEY_PATH ?? 'config/keys/current.pem',
+    keyringPath: env.KEYRING_PATH ?? 'config/keys/keyring.json',
+    keyringReloadSeconds: positiveInt(env.KEYRING_RELOAD_SECONDS, 30, 'KEYRING_RELOAD_SECONDS'),
     rateLimitMax: positiveInt(env.RATE_LIMIT_MAX, 60, 'RATE_LIMIT_MAX'),
     rateLimitWindowSeconds: positiveInt(env.RATE_LIMIT_WINDOW_SECONDS, 60, 'RATE_LIMIT_WINDOW_SECONDS'),
     proxyPublicKeyPath: env.PROXY_PUBLIC_KEY_PATH ?? 'config/keys/proxy.pub.pem',

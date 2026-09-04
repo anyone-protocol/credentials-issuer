@@ -47,7 +47,7 @@ Exit `0` conforming, `1` nonconforming (naming the failed checks), `2` if the ru
 at all. Point it at any deployment, including one of ours. Full options in
 [buyer-harness.md](buyer-harness.md).
 
-`bun run keys:dev` stands in for two keys that are yours and ours respectively in a real
+`bun run keys:dev` stands in for keys that are yours and ours respectively in a real
 deployment: the **epoch signing key** is ours, and the **proxy key** is yours. You generate the
 proxy keypair, keep the private half, and send us the public half.
 
@@ -121,6 +121,7 @@ are passed through untouched, so you can add fields without waiting on a harness
 | `REQUEST_INVALID` | 400 | Body is not an object, or `epoch` is missing. |
 | `IDEMPOTENCY_CONFLICT` | 409 | `Idempotency-Key` reused with a different body. |
 | `RATE_LIMITED` | 429 | Too many requests for this `payment_ref`. |
+| `WRONG_EPOCH` | 400 | The named epoch is past its grace window, or unknown. |
 
 A `402` carrying a `payment` block is a payment demand. A `402` without one is us rejecting your
 claim — the body says which.
@@ -135,6 +136,10 @@ beyond validating count and length, and never sees an unblinded serial.
 | `SIGNING_WORKERS=0` | Signs inline, starts no worker threads at all. Slower, simplest to run. |
 | `SIGNING_NATIVE_RSA=false` | Forces the library's pure-JS path. Slow: pair with workers, not with `0`. |
 | `BUNDLE_SIZE`, `BUNDLE_PRICE` | `k` and the price your claims must match. |
+
+Epochs rotate. `GET /v1/keys/current` tells you the current one, and a bundle must name an epoch
+that is still usable or you get `WRONG_EPOCH`. A rotated-out epoch keeps signing for a grace window,
+so a buyer who read the key document moments before a rotation is not stranded mid-purchase.
 
 All modes produce identical signatures. Nothing about issuance performance should block you; worst
 case, turn all of it off and you still get correct credentials.

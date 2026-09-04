@@ -20,8 +20,7 @@ services:
       POSTGRES_DB: app
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      KEY_DOCUMENT_PATH: /keys/current.json
-      ISSUER_PRIVATE_KEY_PATH: /keys/current.pem
+      KEYRING_PATH: /keys/keyring.json
       PROXY_PUBLIC_KEY_PATH: /keys/proxy.pub.pem
       BUNDLE_PRICE: "1.00"
     # Keys are mounted, never baked into the image. :z relabels for SELinux
