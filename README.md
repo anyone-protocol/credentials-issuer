@@ -113,16 +113,39 @@ Run the tests with `bun test` and the typecheck with `bunx tsc --noEmit`. The sc
 the real app against Postgres, so bring the backing services up first. CI provides them as service
 containers.
 
-Test names are the Gherkin scenario names from
-[docs/issuer-mvp-scope.md](docs/issuer-mvp-scope.md) verbatim, so the mapping from spec to suite
-stays checkable by eye. The scenarios are the spec of record: do not rename or add without a scope
-change.
-
 To run the service itself in a container alongside the backing services:
 
 ```sh
 podman compose -f compose.full.yml up --build
 ```
+
+## Acceptance testing
+
+The Gherkin scenarios in [docs/issuer-mvp-scope.md](docs/issuer-mvp-scope.md) are the spec of
+record. Rather than run them through Cucumber, each is an ordinary `bun test` case declared with
+`scenario('<name verbatim>')`, and a coverage gate keeps the two in sync. Plain fast tests,
+with BDD's traceability guarantee bolted on.
+
+[scenario-coverage.spec.ts](apps/backend/src/testing/scenario-coverage.spec.ts) fails the build on
+any of:
+
+- a scenario in an **enforced** milestone with no test,
+- a `scenario()` name that does not appear in the scope doc verbatim (a rename, a typo, or a
+  scenario invented in code, which the working method forbids),
+- a scope doc that stops parsing into attributed scenarios, so the two checks above cannot pass
+  vacuously.
+
+Which milestones are enforced is one line, `IMPLEMENTED_MILESTONES` in
+[scope-scenarios.ts](apps/backend/src/testing/scope-scenarios.ts). Flip a milestone on in the
+commit that lands it. Until then its scenarios show in the report but do not block CI, so unbuilt
+scope never fails the build.
+
+```sh
+bun run scenarios      # coverage by milestone; also a CI step
+```
+
+Tests that are not scope scenarios use plain `it()` and are free-form. Behavior that needs a
+scenario and has none is a question for the scope owner, not a scenario to add here.
 
 ## Database migrations
 
@@ -189,6 +212,7 @@ Publishing authenticates with the built-in `GITHUB_TOKEN` — no repository secr
 ├── compose.yml                 local backing services (redis, postgres)
 ├── compose.full.yml            the above plus the issuer in a container
 ├── config/keys/current.json    static key document served by /v1/keys/current
+├── scripts/scenario-report.ts  scope scenario coverage by milestone
 ├── .github/workflows/ci.yaml   test + publish image
 ├── docs/
 │   ├── issuer-mvp-scope.md     scope, invariants, BDD scenarios (spec of record)
@@ -199,5 +223,6 @@ Publishing authenticates with the built-in `GITHUB_TOKEN` — no repository secr
     ├── issuance/               the I5 retention record, and nothing more
     ├── payment/                payment claim parsing
     ├── config/                 k and blob sizes
+    ├── testing/                harness and the scope scenario coverage gate
     └── database/, queue/       Postgres and Redis wiring
 ```

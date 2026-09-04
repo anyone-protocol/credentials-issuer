@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { scenario } from '../testing/scenario';
 import {
   errorCode,
   postBundle,
@@ -20,7 +21,7 @@ describe('POST /v1/bundles', () => {
     await harness.dataSource.query('TRUNCATE TABLE issuance_record');
   });
 
-  it('bundle purchase returns correctly sized blobs', async () => {
+  scenario('bundle purchase returns correctly sized blobs', async () => {
     const { config } = harness;
 
     const response = await postBundle(harness, {
@@ -51,7 +52,7 @@ describe('POST /v1/bundles', () => {
     expect(rows[0]).toMatchObject({ payment_ref: 'pay-ref-1', epoch: '0', bundle_count: 1 });
   });
 
-  it('over-count bundle is rejected', async () => {
+  scenario('over-count bundle is rejected', async () => {
     const { config } = harness;
 
     const response = await postBundle(harness, {
@@ -65,7 +66,7 @@ describe('POST /v1/bundles', () => {
     expect(await harness.dataSource.query('SELECT * FROM issuance_record')).toHaveLength(0);
   });
 
-  it('malformed blank is rejected', async () => {
+  scenario('malformed blank is rejected', async () => {
     const { config } = harness;
     const undersized = Buffer.alloc(config.blankSizeBytes - 1).toString('base64');
 

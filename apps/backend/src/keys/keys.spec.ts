@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { afterAll, beforeAll, describe, expect } from 'bun:test';
+import { scenario } from '../testing/scenario';
 import { startIssuer, type IssuerHarness } from '../testing/issuer-harness';
 import { BLIND_SIGNATURE_SUITE, KEY_DOCUMENT_FIELDS } from './key-document';
 
@@ -10,7 +11,7 @@ describe('GET /v1/keys/current', () => {
   });
   afterAll(() => harness.close());
 
-  it('key document is served', async () => {
+  scenario('key document is served', async () => {
     const response = await fetch(`${harness.url}/v1/keys/current`);
 
     expect(response.status).toBe(200);
