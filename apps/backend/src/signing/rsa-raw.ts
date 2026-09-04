@@ -1,4 +1,11 @@
-import { constants, createPrivateKey, createPublicKey, privateDecrypt, publicEncrypt } from 'node:crypto';
+import {
+  constants,
+  createPrivateKey,
+  createPublicKey,
+  privateDecrypt,
+  publicEncrypt,
+  type KeyObject,
+} from 'node:crypto';
 
 /**
  * Supplies WebCrypto's `RSA-RAW` using OpenSSL through node:crypto.
@@ -69,6 +76,16 @@ export function installRsaRawSupport(): void {
   });
 }
 
+function asInteger(bytes: Buffer): bigint {
+  return bytes.byteLength === 0 ? 0n : BigInt(`0x${bytes.toString('hex')}`);
+}
+
+function modulusOf(publicKey: KeyObject): bigint {
+  const { n } = publicKey.export({ format: 'jwk' }) as { n?: string };
+  if (!n) throw new Error('RSA public key has no modulus');
+  return asInteger(Buffer.from(n, 'base64url'));
+}
+
 function toBuffer(view: ArrayBufferView | ArrayBuffer): Buffer {
   return ArrayBuffer.isView(view)
     ? Buffer.from(view.buffer, view.byteOffset, view.byteLength)
@@ -77,15 +94,22 @@ function toBuffer(view: ArrayBufferView | ArrayBuffer): Buffer {
 
 function rawSign(pkcs8: Buffer, message: Buffer): ArrayBuffer {
   const privateKey = createPrivateKey({ key: pkcs8, format: 'der', type: 'pkcs8' });
+  const publicKey = createPublicKey(privateKey);
+
+  // RFC 9474 RSASP1 step 1: the message must be less than the modulus. Checked
+  // here rather than left to OpenSSL, whose error carries a different shape on
+  // different runtimes, so both signing paths reject an invalid blank in the
+  // same words (see BlindSigner) wherever they run.
+  if (asInteger(message) >= modulusOf(publicKey)) {
+    throw new Error('signature representative out of range');
+  }
 
   let signature: Buffer;
   try {
     signature = privateDecrypt({ key: privateKey, padding: constants.RSA_NO_PADDING }, message);
   } catch (error) {
-    // RFC 9474 RSASP1 rejects a message that is not less than the modulus, and
-    // so does OpenSSL. Rethrown in the library's own wording so both signing
-    // paths report an invalid blank identically (see BlindSigner).
-    if ((error as { code?: string }).code === 'ERR_OSSL_DATA_TOO_LARGE_FOR_MODULUS') {
+    // Backstop, in case some build rejects an input this check let through.
+    if (/DATA_TOO_LARGE_FOR_MODULUS/.test((error as Error).message ?? '')) {
       throw new Error('signature representative out of range');
     }
     throw error;
@@ -96,7 +120,7 @@ function rawSign(pkcs8: Buffer, message: Buffer): ArrayBuffer {
   // its slow path; Cloudflare's own RSA-RAW path does not, so doing it here
   // keeps the fast path no less defensive than the slow one.
   const roundTrip = publicEncrypt(
-    { key: createPublicKey(privateKey), padding: constants.RSA_NO_PADDING },
+    { key: publicKey, padding: constants.RSA_NO_PADDING },
     signature,
   );
   if (!roundTrip.equals(message)) throw new Error('signing failure');
