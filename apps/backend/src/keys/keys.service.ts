@@ -8,6 +8,7 @@ import { parseKeyDocument, type KeyDocument } from './key-document';
 export class KeysService implements OnModuleInit {
   private document?: KeyDocument;
   private signingKey?: CryptoKey;
+  private signingKeyPem?: string;
 
   constructor(@Inject(ISSUER_CONFIG) private readonly config: IssuerConfig) {}
 
@@ -55,10 +56,17 @@ export class KeysService implements OnModuleInit {
     }
   }
 
+  /** The PEM, for worker threads that import their own copy (see SignerPool). */
+  epochSigningKeyPem(): string {
+    if (!this.signingKeyPem) throw new Error('signing key not loaded');
+    return this.signingKeyPem;
+  }
+
   private async loadSigningKey(): Promise<CryptoKey> {
     const path = this.config.privateKeyPath;
     try {
-      return await importPrivateKey(await readFile(path, 'utf8'));
+      this.signingKeyPem = await readFile(path, 'utf8');
+      return await importPrivateKey(this.signingKeyPem);
     } catch (cause) {
       throw new Error(`unable to load epoch signing key at ${path}: ${(cause as Error).message}`, {
         cause,

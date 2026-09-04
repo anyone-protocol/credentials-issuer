@@ -122,6 +122,8 @@ could not happen at all. Full flag list, library API and the M1.1 upgrade path a
 | `PROXY_PUBLIC_KEY_PATH` | `config/keys/proxy.pub.pem` | Proxy's Ed25519 public key, SPKI PEM. |
 | `BUNDLE_PRICE` | `1.00` | Price of one bundle, exact decimal. |
 | `RECONCILIATION_INTERVAL_SECONDS` | `60` | How often the reconciliation cycle runs. |
+| `SIGNING_WORKERS` | `4` | Blind-signing worker threads. Match the CPU allocation. |
+| `SIGNING_NATIVE_RSA` | `true` | Use the RSA-RAW fast path. `false` forces the pure-JS path. |
 | `RATE_LIMIT_MAX` | `60` | Requests per sliding window, per `payment_ref`. |
 | `RATE_LIMIT_WINDOW_SECONDS` | `60` | Sliding window length. |
 
@@ -223,19 +225,49 @@ leave a counter behind.
 `bundle_size` is recorded per epoch, so changing `k` later cannot retroactively make a settled
 epoch look diverged.
 
-## Performance: blind signing is slow here
+## Performance: the RSA-RAW fast path
 
-`blindrsa-ts` uses WebCrypto's non-standard `RSA-RAW` where it exists (Cloudflare Workers) and
-otherwise falls back to pure-JS bignum arithmetic. Bun has no `RSA-RAW`, so **one blind signature
-costs about 280ms of blocked event loop**, and a `k=10` bundle costs roughly 2.8 seconds.
+`blindrsa-ts` performs the raw RSA private operation through WebCrypto's `RSA-RAW` where it exists,
+and otherwise through pure-JS bignum arithmetic costing **~280ms per signature**. `RSA-RAW` is a
+Cloudflare Workers extension: neither Bun nor Node has it (measured on both), because the library
+targets browsers and Workers where `node:crypto` is unavailable. It is not out of date, and the
+runtime choice makes no material difference.
 
-That is a throughput and latency problem, not a correctness one, and it needs a decision before any
-real load: moving signing to worker threads would stop one purchase stalling health checks and
-other requests, though it would not make it faster. Invariant I1 rules out swapping the library's
-RSA operation for a native one.
+So the issuer supplies that one primitive itself, in
+[rsa-raw.ts](apps/backend/src/signing/rsa-raw.ts), backed by OpenSSL through `node:crypto`, and
+constructs the suite with the library's own public `supportsRSARAW` flag. Every RFC 9474 step still
+runs inside `blindrsa-ts`; the exponentiation is OpenSSL's. Signing then runs on a pool of worker
+threads ([signer-pool.ts](apps/backend/src/signing/signer-pool.ts)), which keeps it off the event
+loop and uses more than one core.
 
-Signing happens *before* the recording transaction opens, so it does not hold a database connection
-while it runs; nothing is delivered unless the record commits.
+Measured with 8 concurrent `k=10` bundles:
+
+| | Pure-JS, main thread | Pure-JS, 8 workers | Fast path, 4 workers |
+| --- | --- | --- | --- |
+| Throughput | ~3.5 sig/sec | ~27 sig/sec | **~2700 sig/sec** |
+| Bundle latency | ~2.8 s | 498–3010 ms | **12–29 ms** |
+| `/healthz` under load | stalls for seconds | 0.6 ms median | 0.7 ms median |
+
+### Why this is safe, and how it is guarded
+
+Supplying `RSA-RAW` is a judgement call against invariant I1, so the risk is contained rather than
+assumed away:
+
+- **It reimplements no protocol step.** Prepare, blind, blindSign, finalize and verify all stay in
+  the library. `supportsRSARAW` is a public constructor parameter, not an internal.
+- **It is more defensive than Cloudflare's own fast path**, which skips RFC 9474 BlindSign steps 3-4.
+  This one performs that check, so a faulted exponentiation cannot leak the key.
+- **Boot refuses to trust it blindly.** A known-answer test signs a CIRCL-generated vector and
+  compares byte for byte. Failing it logs a warning and falls back to the pure-JS path rather than
+  refusing to boot: slow issuance beats none, and the worker pool keeps it off the event loop.
+- **CI cross-verifies against CIRCL in Go**, so a wrong fast path fails the build.
+- **Both paths fail identically** on an invalid blank, pinned by a test.
+
+Set `SIGNING_NATIVE_RSA=false` to force the pure-JS path. Set `SIGNING_WORKERS` to match the
+deployment's CPU allocation; each worker holds its own copy of the epoch key.
+
+**The durable fix is upstream.** A Node/Bun backend contributed to `blindrsa-ts` would make this
+polyfill unnecessary, and would work identically on either runtime.
 
 ## Database migrations
 
@@ -326,7 +358,7 @@ Publishing authenticates with the built-in `GITHUB_TOKEN` — no repository secr
     ├── payment/                claim parsing and verification, rate limiter
     ├── accounting/             epoch counters, reconciliation job, alarms
     ├── config/                 k and blob sizes
-    ├── signing/                RFC 9474 BlindSign under the epoch key
+    ├── signing/                RFC 9474 BlindSign, on a worker thread pool
     ├── testing/                harness and the scope scenario coverage gate
     └── database/, queue/       Postgres and Redis wiring
 ```

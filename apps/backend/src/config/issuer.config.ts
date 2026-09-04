@@ -16,6 +16,10 @@ export interface IssuerConfig {
   /** Price of one bundle, as an exact decimal string. */
   readonly bundlePrice: string;
   readonly reconciliationIntervalSeconds: number;
+  /** Blind-signing worker threads. Match this to the deployment's CPU allocation. */
+  readonly signingWorkers: number;
+  /** Use the RSA-RAW fast path. Off falls back to the library's pure-JS path. */
+  readonly useNativeRsa: boolean;
 }
 
 function positiveInt(value: string | undefined, fallback: number, name: string): number {
@@ -43,5 +47,7 @@ export function loadIssuerConfig(env: NodeJS.ProcessEnv = process.env): IssuerCo
       60,
       'RECONCILIATION_INTERVAL_SECONDS',
     ),
+    signingWorkers: positiveInt(env.SIGNING_WORKERS, 4, 'SIGNING_WORKERS'),
+    useNativeRsa: (env.SIGNING_NATIVE_RSA ?? 'true') !== 'false',
   };
 }

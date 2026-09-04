@@ -1,8 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { RSABSSA } from '@cloudflare/blindrsa-ts';
 import { IssuerException } from '../errors/issuer.exception';
-import { base64ToBytes, bytesToBase64 } from '../keys/bytes';
-import { KeysService } from '../keys/keys.service';
+import { SignerPool } from './signer-pool';
 
 /**
  * RFC 9474 BlindSign under the current epoch key.
@@ -19,7 +18,7 @@ import { KeysService } from '../keys/keys.service';
 export class BlindSigner {
   private readonly suite = RSABSSA.SHA384.PSS.Randomized();
 
-  constructor(private readonly keys: KeysService) {}
+  constructor(private readonly pool: SignerPool) {}
 
   get suiteName(): string {
     return this.suite.toString();
@@ -30,11 +29,8 @@ export class BlindSigner {
    * straight to the library and are never inspected, logged or stored (I2).
    */
   async signBlindedBlank(blindedBlankBase64: string): Promise<string> {
-    const blinded = base64ToBytes(blindedBlankBase64);
-
-    let signature: Uint8Array;
     try {
-      signature = await this.suite.blindSign(this.keys.epochSigningKey(), blinded);
+      return await this.pool.sign(blindedBlankBase64);
     } catch (error) {
       // A blank of the right length can still be an invalid blinded message:
       // RFC 9474 requires it to be less than the modulus. That is the client's
@@ -48,6 +44,5 @@ export class BlindSigner {
       }
       throw error;
     }
-    return bytesToBase64(signature);
   }
 }
