@@ -12,11 +12,12 @@ non-negotiable.
 
 ## Status
 
-M0.1, M0.2, M0.4 and M1.1 complete. Issuance is **real**: the issuer blind-signs under an epoch RSA
-key with `@cloudflare/blindrsa-ts`, the harness blinds, unblinds and verifies, and the published
-test vectors cross-verify against CIRCL. Still missing: the payment claim is parsed but not
-verified (M1.4), and epoch keys are files rather than Vault-managed and never rotate (M1.2). Do not
-expose this outside the sandbox.
+M0.1, M0.2, M0.4, M1.1 and M1.4 complete. Issuance is **real**: the issuer blind-signs under an
+epoch RSA key with `@cloudflare/blindrsa-ts`, the harness blinds, unblinds and verifies, the
+published test vectors cross-verify against CIRCL, and the proxy's payment claim must carry a valid
+`proxy_sig` and the right amount. Still missing: epoch keys are files rather than Vault-managed and
+never rotate (M1.2), and **a valid claim can be replayed for more bundles** (see
+[docs/payment-claim.md](docs/payment-claim.md)). Do not expose this outside the sandbox.
 
 | Endpoint | Milestone | State |
 | -------- | --------- | ----- |
@@ -24,8 +25,8 @@ expose this outside the sandbox.
 | `POST /v1/bundles` | M0.1, M0.2, M1.1 | live, real RFC 9474 blind signatures |
 | `GET /v1/keys/current` | M0.1 | live, static file (Vault-backed epoch keys land in M1.2) |
 
-Next: M1.2 (epoch key lifecycle in Vault), M1.4 (payment claim verification), and M0.3 (sandbox
-deployment behind the TOON proxy).
+Next: M1.2 (epoch key lifecycle in Vault), M1.3 (aggregate accounting and the overissuance alarm),
+and M0.3 (sandbox deployment behind the TOON proxy).
 
 ## API
 
@@ -62,7 +63,8 @@ mismatch stops startup.
 ## Epoch keys
 
 The signing key is a PKCS#8 PEM at `ISSUER_PRIVATE_KEY_PATH`, and the key document at
-`KEY_DOCUMENT_PATH` publishes its public half. Neither is committed and neither is baked into the
+`KEY_DOCUMENT_PATH` publishes its public half. The proxy's Ed25519 **public** key sits alongside at
+`PROXY_PUBLIC_KEY_PATH`; the issuer only verifies with it and never holds the proxy's private key. Neither is committed and neither is baked into the
 image: the container mounts them at runtime, and from M1.2 they come from Vault.
 
 For local work, generate a throwaway pair:
@@ -82,7 +84,7 @@ All errors return `{ "error": { "code": ..., "message": ... } }`.
 | `REQUEST_INVALID` | 400 | Body is not an object, or `epoch` is missing. Not a scope-defined code, see [docs/payment-claim.md](docs/payment-claim.md). |
 | `BUNDLE_SIZE` | 400 | `blinded_blanks` length is not `k`. |
 | `BLANK_FORMAT` | 400 | A blank is not base64, does not decode to the configured blank size, or is not a valid blinded message for the epoch key. |
-| `CLAIM_INVALID` | 402 | Payment claim missing or malformed. |
+| `CLAIM_INVALID` | 402 | Payment claim missing, malformed, badly signed, or claiming the wrong amount. |
 | `IDEMPOTENCY_CONFLICT` | 409 | `Idempotency-Key` reused for a different request. Not a scope-defined code. |
 | `RATE_LIMITED` | 429 | Too many requests for this `payment_ref`. |
 
@@ -117,6 +119,8 @@ could not happen at all. Full flag list, library API and the M1.1 upgrade path a
 | `SIGNATURE_SIZE_BYTES` | `256` | Size of each returned blob (RSA-2048). |
 | `KEY_DOCUMENT_PATH` | `config/keys/current.json` | Static key document to serve. |
 | `ISSUER_PRIVATE_KEY_PATH` | `config/keys/current.pem` | Epoch signing key, PKCS#8 PEM. |
+| `PROXY_PUBLIC_KEY_PATH` | `config/keys/proxy.pub.pem` | Proxy's Ed25519 public key, SPKI PEM. |
+| `BUNDLE_PRICE` | `1.00` | Price of one bundle, exact decimal. |
 | `RATE_LIMIT_MAX` | `60` | Requests per sliding window, per `payment_ref`. |
 | `RATE_LIMIT_WINDOW_SECONDS` | `60` | Sliding window length. |
 
@@ -276,7 +280,7 @@ Publishing authenticates with the built-in `GITHUB_TOKEN` — no repository secr
     ├── bundles/                POST /v1/bundles, request validation
     ├── keys/                   GET /v1/keys/current, key document schema
     ├── issuance/               the I5 retention record, and nothing more
-    ├── payment/                payment claim parsing, rate limiter
+    ├── payment/                claim parsing and verification, rate limiter
     ├── config/                 k and blob sizes
     ├── signing/                RFC 9474 BlindSign under the epoch key
     ├── testing/                harness and the scope scenario coverage gate

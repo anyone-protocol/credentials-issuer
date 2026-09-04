@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { encodePaymentClaim } from './claim';
+import { importProxySigningKey, signPaymentClaim, type PaymentClaimFields } from './claim';
 
 /**
  * What a fronting proxy asks for in a 402. Provisional and pending TOON
@@ -46,10 +46,11 @@ export class PaymentRequiredError extends Error {
 export class StubClaimProvider implements PaymentProvider {
   readonly name = 'stub-claim';
 
-  constructor(private readonly paymentRef: string) {}
+  /** Takes a finished header value: signing is async, initialHeaders is not. */
+  constructor(private readonly claimHeaderValue: string) {}
 
   initialHeaders(): RetryHeaders {
-    return { 'x-payment-claim': encodePaymentClaim(this.paymentRef) };
+    return { 'x-payment-claim': this.claimHeaderValue };
   }
 
   async pay(): Promise<RetryHeaders> {
@@ -104,4 +105,16 @@ export function parsePaymentRequirement(body: unknown): PaymentRequirement {
   if (typeof body !== 'object' || body === null) return {};
   const payment = (body as { payment?: unknown }).payment;
   return typeof payment === 'object' && payment !== null ? (payment as PaymentRequirement) : {};
+}
+
+/**
+ * Builds a claim signed as the proxy would sign it. Standing in for the proxy
+ * needs its signing key, which only a sandbox or a local run should ever have.
+ */
+export async function createStubClaimProvider(
+  fields: PaymentClaimFields,
+  proxySigningKeyPem: string,
+): Promise<StubClaimProvider> {
+  const key = await importProxySigningKey(proxySigningKeyPem);
+  return new StubClaimProvider(await signPaymentClaim(fields, key));
 }

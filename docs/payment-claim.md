@@ -33,23 +33,7 @@ bun run harness --url http://localhost:3000
 | `--epoch` | issuer's current | Epoch to request. |
 | `--payment-ref` | random | Payment reference to claim. |
 | `--idempotency-key` | none | Sends an `Idempotency-Key` header. |
-| `--payment` | `stub-claim` | See below. |
 | `--json` | off | Emit the report as JSON for machine consumption. |
-
-### Payment modes
-
-| Mode | Flow |
-| ---- | ---- |
-| `stub-claim` | Talks straight to an issuer with a synthetic `X-Payment-Claim`, as if a proxy had already forwarded one. Cannot satisfy a 402. |
-| `stub-receipt` | Runs the full `request -> 402 -> pay -> retry` flow through a proxy, with the payment itself stubbed. |
-| `none` | Sends nothing, so a 402 is fatal. Use it to confirm a proxy actually gates the route. |
-
-`stub-receipt` fabricates a receipt rather than moving $ANYONE; real settlement lands when the
-channel contracts are on Sepolia, and only `PaymentProvider.pay()` changes. Supply your own
-provider through `purchaseBundle({ payment })` to plug in a wallet.
-
-The retry happens at most once, and `PurchaseResult.paymentFlow` records which route the purchase
-took (`direct` or `402-retry`).
 
 ### Exit codes
 

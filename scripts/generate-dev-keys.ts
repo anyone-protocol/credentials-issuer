@@ -8,12 +8,15 @@
 import { RSABSSA } from '@cloudflare/blindrsa-ts';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { derToPkcs8Pem } from '../apps/backend/src/keys/pem';
+import { derToPkcs8Pem, derToSpkiPem } from '../apps/backend/src/keys/pem';
 import { BLIND_SIGNATURE_SUITE } from '../apps/backend/src/keys/key-document';
 
 const REPO_ROOT = join(import.meta.dir, '..');
 export const DEV_KEY_PEM = join(REPO_ROOT, 'config/keys/current.pem');
 export const DEV_KEY_DOCUMENT = join(REPO_ROOT, 'config/keys/current.json');
+/** Stands in for the fronting proxy's claim-signing key (M1.4). */
+export const DEV_PROXY_KEY_PEM = join(REPO_ROOT, 'config/keys/proxy.pem');
+export const DEV_PROXY_PUBLIC_PEM = join(REPO_ROOT, 'config/keys/proxy.pub.pem');
 
 export async function generateDevKeys(): Promise<void> {
   const { privateKey, publicKey } = await RSABSSA.SHA384.generateKey({
@@ -35,17 +38,29 @@ export async function generateDevKeys(): Promise<void> {
     mode: 0o600,
   });
   await writeFile(DEV_KEY_DOCUMENT, `${JSON.stringify(document, null, 2)}\n`);
+
+  const proxy = (await crypto.subtle.generateKey({ name: 'Ed25519' }, true, [
+    'sign',
+    'verify',
+  ])) as unknown as CryptoKeyPair;
+  await writeFile(DEV_PROXY_KEY_PEM, derToPkcs8Pem(await crypto.subtle.exportKey('pkcs8', proxy.privateKey)), {
+    mode: 0o600,
+  });
+  await writeFile(DEV_PROXY_PUBLIC_PEM, derToSpkiPem(await crypto.subtle.exportKey('spki', proxy.publicKey)));
 }
 
 export async function ensureDevKeys(force = false): Promise<boolean> {
-  if (!force && (await Bun.file(DEV_KEY_PEM).exists()) && (await Bun.file(DEV_KEY_DOCUMENT).exists())) {
-    return false;
-  }
+  const present = await Promise.all(
+    [DEV_KEY_PEM, DEV_KEY_DOCUMENT, DEV_PROXY_KEY_PEM, DEV_PROXY_PUBLIC_PEM].map((path) =>
+      Bun.file(path).exists(),
+    ),
+  );
+  if (!force && present.every(Boolean)) return false;
   await generateDevKeys();
   return true;
 }
 
 if (import.meta.main) {
   const written = await ensureDevKeys(Bun.argv.includes('--force'));
-  console.log(written ? `wrote ${DEV_KEY_PEM} and ${DEV_KEY_DOCUMENT}` : 'dev keys already present');
+  console.log(written ? `wrote epoch and proxy dev keys under ${join(REPO_ROOT, 'config/keys')}` : 'dev keys already present');
 }

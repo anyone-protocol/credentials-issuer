@@ -1,7 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { startIssuer, type IssuerHarness } from '../../../apps/backend/src/testing/issuer-harness';
 import { purchaseBundle } from './purchase';
-import { NoPaymentProvider, StubClaimProvider, StubReceiptProvider } from './payment';
+import { readFile } from 'node:fs/promises';
+import { DEV_PROXY_KEY_PEM } from '../../../scripts/generate-dev-keys';
+import {
+  createStubClaimProvider,
+  NoPaymentProvider,
+  StubReceiptProvider,
+} from './payment';
 import { startFakeProxy, type FakeProxy } from './testing/fake-proxy';
 
 /**
@@ -13,9 +19,12 @@ describe('402 payment flow', () => {
   let issuer: IssuerHarness;
   let proxy: FakeProxy;
 
+  let proxyKeyPem: string;
+
   beforeAll(async () => {
     issuer = await startIssuer();
-    proxy = startFakeProxy({ issuerUrl: issuer.url });
+    proxyKeyPem = await readFile(DEV_PROXY_KEY_PEM, 'utf8');
+    proxy = startFakeProxy({ issuerUrl: issuer.url, signingKeyPem: proxyKeyPem });
   });
   afterAll(async () => {
     proxy.stop();
@@ -49,7 +58,10 @@ describe('402 payment flow', () => {
     const result = await purchaseBundle({
       baseUrl: issuer.url,
       paymentRef: 'pay-direct-1',
-      payment: new StubClaimProvider('pay-direct-1'),
+      payment: await createStubClaimProvider(
+        { payment_ref: 'pay-direct-1', amount: '1.00', route_id: 'route-1' },
+        proxyKeyPem,
+      ),
       parameters: parameters(),
     });
 
@@ -57,8 +69,31 @@ describe('402 payment flow', () => {
     expect(result.conformance.passed).toBe(true);
   });
 
+  // A claim the issuer refuses also comes back as 402. Reporting that as
+  // "cannot pay" would hide the real reason from anyone diagnosing an issuer.
+  it('surfaces a rejected claim rather than trying to pay for it', async () => {
+    await expect(
+      purchaseBundle({
+        baseUrl: issuer.url,
+        paymentRef: 'pay-wrong-amount',
+        payment: await createStubClaimProvider(
+          { payment_ref: 'pay-wrong-amount', amount: '0.01', route_id: 'route-1' },
+          proxyKeyPem,
+        ),
+        parameters: parameters(),
+      }),
+    ).rejects.toThrow(/CLAIM_INVALID/);
+  });
+
   it('fails clearly when payment is required and the provider cannot pay', async () => {
-    for (const payment of [new NoPaymentProvider(), new StubClaimProvider('pay-x')]) {
+    const cannotPay = [
+      new NoPaymentProvider(),
+      await createStubClaimProvider(
+        { payment_ref: 'pay-x', amount: '1.00', route_id: 'route-1' },
+        proxyKeyPem,
+      ),
+    ];
+    for (const payment of cannotPay) {
       await expect(
         purchaseBundle({
           baseUrl: proxy.url,

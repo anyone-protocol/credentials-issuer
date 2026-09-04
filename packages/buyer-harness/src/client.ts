@@ -1,7 +1,7 @@
 import { encodePaymentClaim } from './claim';
 import {
+  NoPaymentProvider,
   parsePaymentRequirement,
-  StubClaimProvider,
   type PaymentProvider,
   type RetryHeaders,
 } from './payment';
@@ -28,7 +28,7 @@ export interface IssuerClientOptions {
   readonly baseUrl: string;
   readonly paymentRef: string;
   readonly idempotencyKey?: string;
-  /** Defaults to a synthetic claim, i.e. talking to an issuer directly. */
+  /** Defaults to sending nothing: a claim must be signed, so it cannot be invented here. */
   readonly payment?: PaymentProvider;
   /** Injectable for tests and for callers with their own retry or proxy layer. */
   readonly fetch?: typeof globalThis.fetch;
@@ -43,7 +43,7 @@ export class IssuerClient {
   constructor(private readonly options: IssuerClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
     this.fetch = options.fetch ?? globalThis.fetch;
-    this.payment = options.payment ?? new StubClaimProvider(options.paymentRef);
+    this.payment = options.payment ?? new NoPaymentProvider();
   }
 
   get paymentFlow(): PaymentFlow {
@@ -77,7 +77,21 @@ export class IssuerClient {
     let response = await this.send(path, init, this.payment.initialHeaders());
 
     if (response.status === 402) {
-      const requirement = parsePaymentRequirement(await this.readJsonOrNull(response));
+      // A 402 carrying payment requirements is a proxy asking to be paid. A 402
+      // without them is the issuer refusing a claim, and paying would not help:
+      // reporting it as "cannot pay" would hide the real reason.
+      const body = await this.readJsonOrNull(response);
+      const requirement = parsePaymentRequirement(body);
+
+      if (Object.keys(requirement).length === 0) {
+        const { code, message } = errorFrom(body);
+        throw new IssuerRequestError(
+          `${path} returned 402${code ? ` ${code}` : ''}${message ? `: ${message}` : ''}`,
+          402,
+          code,
+        );
+      }
+
       this.flow = '402-retry';
       response = await this.send(path, init, await this.payment.pay(requirement));
 
@@ -128,11 +142,11 @@ export class IssuerClient {
   }
 
   private async readError(response: Response): Promise<{ code?: string; message?: string }> {
-    try {
-      const body = (await response.json()) as Partial<IssuerErrorBody>;
-      return { code: body.error?.code, message: body.error?.message };
-    } catch {
-      return {};
-    }
+    return errorFrom(await this.readJsonOrNull(response));
   }
+}
+
+function errorFrom(body: unknown): { code?: string; message?: string } {
+  const error = (body as Partial<IssuerErrorBody> | null)?.error;
+  return { code: error?.code, message: error?.message };
 }

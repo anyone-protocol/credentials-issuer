@@ -4,6 +4,7 @@ import { join } from 'node:path';
 // a real local stub issuer, not a double.
 import { startIssuer, type IssuerHarness } from '../../../apps/backend/src/testing/issuer-harness';
 import { scenario } from '../../../apps/backend/src/testing/scenario';
+import { DEV_PROXY_KEY_PEM } from '../../../scripts/generate-dev-keys';
 import { startFakeIssuer } from './testing/fake-issuer';
 import { DEFAULT_BUNDLE_PARAMETERS } from './types';
 
@@ -38,6 +39,7 @@ describe('buyer harness CLI', () => {
 
     const run = await runCli([
       '--url', issuer.url,
+      '--proxy-key', DEV_PROXY_KEY_PEM,
       '--bundle-size', String(bundleSize),
       '--blank-size', String(blankSizeBytes),
       '--signature-size', String(signatureSizeBytes),
@@ -54,7 +56,7 @@ describe('buyer harness CLI', () => {
     const fake = startFakeIssuer({ ...parameters, wrongSizedBlobIndex: 3 });
 
     try {
-      const run = await runCli(['--url', fake.url]);
+      const run = await runCli(['--url', fake.url, '--proxy-key', DEV_PROXY_KEY_PEM]);
 
       expect(run.exitCode).not.toBe(0);
       // "naming the size assertion that failed"
@@ -70,7 +72,7 @@ describe('buyer harness CLI', () => {
   });
 
   it('exits 2, distinctly from nonconformance, when the issuer is unreachable', async () => {
-    const run = await runCli(['--url', 'http://127.0.0.1:1']);
+    const run = await runCli(['--url', 'http://127.0.0.1:1', '--proxy-key', DEV_PROXY_KEY_PEM]);
 
     expect(run.exitCode).toBe(2);
     expect(run.stderr).toContain('unreachable');

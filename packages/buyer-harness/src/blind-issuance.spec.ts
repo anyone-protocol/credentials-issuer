@@ -1,7 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { startIssuer, type IssuerHarness } from '../../../apps/backend/src/testing/issuer-harness';
 import { scenario } from '../../../apps/backend/src/testing/scenario';
+import { readFile } from 'node:fs/promises';
+import { DEV_PROXY_KEY_PEM } from '../../../scripts/generate-dev-keys';
 import { RsaBlinder } from './blinding';
+import { createStubClaimProvider } from './payment';
 import { BLIND_SIGNATURE_SUITE } from './conformance';
 import { purchaseBundle } from './purchase';
 
@@ -19,6 +22,10 @@ describe('real blind issuance', () => {
     const result = await purchaseBundle({
       baseUrl: issuer.url,
       paymentRef: 'pay-blind-1',
+      payment: await createStubClaimProvider(
+        { payment_ref: 'pay-blind-1', amount: '1.00', route_id: 'route-1' },
+        await readFile(DEV_PROXY_KEY_PEM, 'utf8'),
+      ),
       parameters: { bundleSize, blankSizeBytes, signatureSizeBytes },
     });
 

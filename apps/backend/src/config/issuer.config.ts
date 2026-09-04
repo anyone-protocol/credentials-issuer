@@ -11,6 +11,10 @@ export interface IssuerConfig {
   /** Requests per window, per payment_ref. Never per IP (I5). */
   readonly rateLimitMax: number;
   readonly rateLimitWindowSeconds: number;
+  /** Ed25519 public key of the fronting proxy, SPKI PEM (M1.4). */
+  readonly proxyPublicKeyPath: string;
+  /** Price of one bundle, as an exact decimal string. */
+  readonly bundlePrice: string;
 }
 
 function positiveInt(value: string | undefined, fallback: number, name: string): number {
@@ -31,5 +35,7 @@ export function loadIssuerConfig(env: NodeJS.ProcessEnv = process.env): IssuerCo
     privateKeyPath: env.ISSUER_PRIVATE_KEY_PATH ?? 'config/keys/current.pem',
     rateLimitMax: positiveInt(env.RATE_LIMIT_MAX, 60, 'RATE_LIMIT_MAX'),
     rateLimitWindowSeconds: positiveInt(env.RATE_LIMIT_WINDOW_SECONDS, 60, 'RATE_LIMIT_WINDOW_SECONDS'),
+    proxyPublicKeyPath: env.PROXY_PUBLIC_KEY_PATH ?? 'config/keys/proxy.pub.pem',
+    bundlePrice: env.BUNDLE_PRICE ?? '1.00',
   };
 }

@@ -6,7 +6,9 @@ import { ISSUER_CONFIG, type IssuerConfig } from '../config/issuer.config';
 import { IssuerException } from '../errors/issuer.exception';
 import { IdempotencyRecord } from '../issuance/idempotency-record.entity';
 import { IssuanceRecord } from '../issuance/issuance-record.entity';
-import type { PaymentClaim } from '../payment/payment-claim';
+import { ClaimRejections } from '../payment/claim-rejections.service';
+import { ClaimRejected, ClaimVerifier } from '../payment/claim-verifier.service';
+import { parsePaymentClaim, type PaymentClaim } from '../payment/payment-claim';
 import { RateLimiter } from '../payment/rate-limiter.service';
 import { BlindSigner } from '../signing/blind-signer.service';
 import { validateBundleRequest, type BundleRequest } from './bundle-request';
@@ -31,15 +33,20 @@ export class BundlesService {
     @InjectRepository(IdempotencyRecord) private readonly keys: Repository<IdempotencyRecord>,
     private readonly rateLimiter: RateLimiter,
     private readonly signer: BlindSigner,
+    private readonly claims: ClaimVerifier,
+    private readonly rejections: ClaimRejections,
     private readonly dataSource: DataSource,
   ) {}
 
   async purchase(
-    claim: PaymentClaim,
+    claimHeader: string | undefined,
     idempotencyKey: string | undefined,
     body: unknown,
   ): Promise<BundleResponse> {
-    // Ahead of validation, so cheap malformed floods cost budget too.
+    // Before anything else: an unverified claim must not reach the signer, and
+    // must not spend a rate-limit budget it does not own (I6, M1.4).
+    const claim = await this.admit(claimHeader);
+
     if (!(await this.rateLimiter.allow(claim.payment_ref))) {
       throw new IssuerException('RATE_LIMITED', 'too many requests for this payment_ref');
     }
@@ -83,6 +90,29 @@ export class BundlesService {
     // Replay: BlindSign is deterministic, so re-signing reproduces the original
     // response and the issuer never had to store one (I2, I5).
     return this.signBundle(request);
+  }
+
+  /**
+   * Parses and verifies the proxy's proof of payment, counting every rejection
+   * so a proxy sending claims we will not honour is visible rather than silent.
+   */
+  private async admit(claimHeader: string | undefined): Promise<PaymentClaim> {
+    let claim: PaymentClaim;
+    try {
+      claim = parsePaymentClaim(claimHeader);
+    } catch (error) {
+      await this.rejections.record(claimHeader ? 'malformed' : 'missing');
+      throw error;
+    }
+
+    try {
+      await this.claims.verify(claim);
+    } catch (error) {
+      if (!(error instanceof ClaimRejected)) throw error;
+      await this.rejections.record(error.reason);
+      throw new IssuerException('CLAIM_INVALID', error.message);
+    }
+    return claim;
   }
 
   /**

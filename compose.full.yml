@@ -21,6 +21,7 @@ services:
       REDIS_PORT: "6379"
       KEY_DOCUMENT_PATH: /keys/current.json
       ISSUER_PRIVATE_KEY_PATH: /keys/current.pem
+      PROXY_PUBLIC_KEY_PATH: /keys/proxy.pub.pem
     # Epoch keys are mounted, never baked into the image. Run `bun run keys:dev`
     # first; stage and live mount Vault-issued keys here instead.
     volumes:

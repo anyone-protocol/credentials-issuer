@@ -3,7 +3,12 @@ import { Test } from '@nestjs/testing';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { DataSource } from 'typeorm';
-import { ensureDevKeys } from '../../../../scripts/generate-dev-keys';
+import { readFile } from 'node:fs/promises';
+import { DEV_PROXY_KEY_PEM, ensureDevKeys } from '../../../../scripts/generate-dev-keys';
+import {
+  importProxySigningKey,
+  signPaymentClaim,
+} from '../../../../packages/buyer-harness/src/claim';
 import { RsaBlinder } from '../../../../packages/buyer-harness/src/blinding';
 import { AppModule } from '../app.module';
 import { ISSUER_CONFIG, loadIssuerConfig, type IssuerConfig } from '../config/issuer.config';
@@ -14,6 +19,7 @@ const REPO_ROOT = join(import.meta.dir, '../../../..');
 
 export interface IssuerHarness {
   readonly url: string;
+  readonly app: INestApplication;
   readonly config: IssuerConfig;
   readonly keyDocument: KeyDocument;
   readonly dataSource: DataSource;
@@ -41,6 +47,7 @@ export async function startIssuer(
   await app.listen(0);
 
   return {
+    app,
     url: await app.getUrl(),
     config: app.get<IssuerConfig>(ISSUER_CONFIG),
     keyDocument: app.get(KeysService).current(),
@@ -72,9 +79,24 @@ export function outOfRangeBlanks(config: IssuerConfig, count = config.bundleSize
   return Array.from({ length: count }, () => blank);
 }
 
-export function claimHeader(paymentRef: string): string {
-  const claim = { payment_ref: paymentRef, amount: '1.00', route_id: 'route-1', proxy_sig: 'stub' };
-  return Buffer.from(JSON.stringify(claim), 'utf8').toString('base64url');
+let proxySigningKey: Promise<CryptoKey> | undefined;
+
+/** A claim signed with the dev proxy key, as the fronting proxy would send. */
+export function claimHeader(
+  paymentRef: string,
+  overrides: { amount?: string; routeId?: string } = {},
+): Promise<string> {
+  proxySigningKey ??= readFile(DEV_PROXY_KEY_PEM, 'utf8').then(importProxySigningKey);
+  return proxySigningKey.then((key) =>
+    signPaymentClaim(
+      {
+        payment_ref: paymentRef,
+        amount: overrides.amount ?? '1.00',
+        route_id: overrides.routeId ?? 'route-1',
+      },
+      key,
+    ),
+  );
 }
 
 /** Fresh per call, so rate-limit budgets never carry between tests or runs. */
@@ -86,19 +108,26 @@ export interface PostBundleOptions {
   /** null omits the claim header entirely. Defaults to a fresh unique ref. */
   readonly paymentRef?: string | null;
   readonly idempotencyKey?: string;
+  /** Overrides the claim header verbatim, for malformed-claim tests. */
+  readonly claim?: string | null;
+  /** Claimed amount, for price-mismatch tests. */
+  readonly amount?: string;
 }
 
-export function postBundle(
+export async function postBundle(
   harness: IssuerHarness,
   body: unknown,
   options: PostBundleOptions = {},
 ): Promise<Response> {
-  const { paymentRef = uniquePaymentRef(), idempotencyKey } = options;
+  const { paymentRef = uniquePaymentRef(), idempotencyKey, claim, amount } = options;
+  const header =
+    claim !== undefined ? claim : paymentRef === null ? null : await claimHeader(paymentRef, { amount });
+
   return fetch(`${harness.url}/v1/bundles`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      ...(paymentRef === null ? {} : { 'x-payment-claim': claimHeader(paymentRef) }),
+      ...(header === null ? {} : { 'x-payment-claim': header }),
       ...(idempotencyKey === undefined ? {} : { 'idempotency-key': idempotencyKey }),
     },
     body: JSON.stringify(body),

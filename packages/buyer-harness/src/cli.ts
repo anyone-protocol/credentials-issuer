@@ -2,7 +2,9 @@
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { IssuerRequestError } from './client';
+import { readFile } from 'node:fs/promises';
 import {
+  createStubClaimProvider,
   NoPaymentProvider,
   PaymentRequiredError,
   StubClaimProvider,
@@ -28,6 +30,11 @@ Buys one bundle and judges the response against the issuer contract.
   --epoch <id>             epoch to request (default: the issuer's current epoch)
   --payment-ref <ref>      payment reference to claim (default: random)
   --idempotency-key <key>  send an Idempotency-Key header
+  --proxy-key <path>       proxy Ed25519 signing key (PKCS#8 PEM), required by
+                           --payment stub-claim because the issuer verifies
+                           proxy_sig from M1.4
+  --amount <decimal>       amount to claim (default 1.00)
+  --route-id <id>          route id to claim (default route-1)
   --payment <mode>         stub-claim (default) talks straight to an issuer with a
                            synthetic claim; stub-receipt runs the full
                            request -> 402 -> pay -> retry flow through a proxy,
@@ -37,10 +44,21 @@ Buys one bundle and judges the response against the issuer contract.
 
 Exit codes: ${EXIT_OK} conforming, ${EXIT_NONCONFORMING} nonconforming, ${EXIT_UNUSABLE} unusable (bad flags, issuer unreachable).`;
 
-function paymentProvider(mode: string, paymentRef: string): PaymentProvider {
+async function paymentProvider(
+  mode: string,
+  claim: { payment_ref: string; amount: string; route_id: string },
+  proxyKeyPath: string | undefined,
+): Promise<PaymentProvider> {
   switch (mode) {
-    case 'stub-claim':
-      return new StubClaimProvider(paymentRef);
+    case 'stub-claim': {
+      if (!proxyKeyPath) {
+        throw new TypeError(
+          '--payment stub-claim needs --proxy-key: the issuer verifies proxy_sig, so an ' +
+            'unsigned claim is rejected. Behind a proxy use --payment stub-receipt instead.',
+        );
+      }
+      return createStubClaimProvider(claim, await readFile(proxyKeyPath, 'utf8'));
+    }
     case 'stub-receipt':
       return new StubReceiptProvider();
     case 'none':
@@ -70,6 +88,9 @@ async function main(): Promise<number> {
       'payment-ref': { type: 'string' },
       'idempotency-key': { type: 'string' },
       payment: { type: 'string', default: 'stub-claim' },
+      'proxy-key': { type: 'string' },
+      amount: { type: 'string' },
+      'route-id': { type: 'string' },
       json: { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
     },
@@ -87,7 +108,15 @@ async function main(): Promise<number> {
   }
 
   const paymentRef = values['payment-ref'] ?? `harness-${randomUUID()}`;
-  const payment = paymentProvider(values.payment ?? 'stub-claim', paymentRef);
+  const payment = await paymentProvider(
+    values.payment ?? 'stub-claim',
+    {
+      payment_ref: paymentRef,
+      amount: values.amount ?? '1.00',
+      route_id: values['route-id'] ?? 'route-1',
+    },
+    values['proxy-key'],
+  );
 
   const result = await purchaseBundle({
     payment,

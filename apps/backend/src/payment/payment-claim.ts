@@ -2,8 +2,9 @@ import { IssuerException } from '../errors/issuer.exception';
 
 export const PAYMENT_CLAIM_HEADER = 'x-payment-claim';
 
-// Provisional shape, pending TOON agreement (scope M1.4). Only payment_ref is
-// consumed in M0.1; proxy_sig and amount are verified in M1.4.
+// Provisional shape, pending TOON agreement (scope M1.4). ClaimVerifier
+// requires every field; they are optional here only so a claim missing one is
+// rejected as a claim rather than failing to parse.
 export interface PaymentClaim {
   readonly payment_ref: string;
   readonly amount?: string;

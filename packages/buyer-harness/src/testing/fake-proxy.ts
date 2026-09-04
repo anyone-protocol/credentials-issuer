@@ -1,9 +1,11 @@
-import { encodePaymentClaim } from '../claim';
+import { importProxySigningKey, signPaymentClaim } from '../claim';
 import { PAYMENT_RECEIPT_HEADER } from '../payment';
 
 export interface FakeProxyOptions {
   /** The real issuer this proxy fronts. */
   readonly issuerUrl: string;
+  /** Proxy signing key, PKCS#8 PEM. The issuer verifies proxy_sig (M1.4). */
+  readonly signingKeyPem: string;
   readonly amount?: string;
   readonly routeId?: string;
 }
@@ -25,6 +27,9 @@ export interface FakeProxy {
  */
 export function startFakeProxy(options: FakeProxyOptions): FakeProxy {
   const settled: string[] = [];
+  const signingKey = importProxySigningKey(options.signingKeyPem);
+  const amount = options.amount ?? '1.00';
+  const routeId = options.routeId ?? 'route-1';
   const issuer = options.issuerUrl.replace(/\/+$/, '');
 
   const server = Bun.serve({
@@ -50,11 +55,11 @@ export function startFakeProxy(options: FakeProxyOptions): FakeProxy {
           {
             error: { code: 'PAYMENT_REQUIRED', message: 'pay for this bundle, then retry' },
             payment: {
-              amount: options.amount ?? '1.00',
+              amount,
               asset: 'ANYONE',
               chain: 'sepolia',
               recipient: '0x000000000000000000000000000000000000dEaD',
-              route_id: options.routeId ?? 'route-1',
+              route_id: routeId,
               nonce: crypto.randomUUID(),
             },
           },
@@ -66,7 +71,11 @@ export function startFakeProxy(options: FakeProxyOptions): FakeProxy {
       // receipt and mints the claim the issuer expects.
       const paymentRef = `proxy-${crypto.randomUUID()}`;
       settled.push(paymentRef);
-      return forward({ 'x-payment-claim': encodePaymentClaim(paymentRef) });
+      const claim = await signPaymentClaim(
+        { payment_ref: paymentRef, amount, route_id: routeId },
+        await signingKey,
+      );
+      return forward({ 'x-payment-claim': claim });
     },
   });
 
