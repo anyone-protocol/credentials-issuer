@@ -5,6 +5,10 @@ import { it } from 'bun:test';
  * docs/issuer-mvp-scope.md. The name must match the doc verbatim;
  * scenario-coverage.spec.ts enforces that in both directions.
  */
-export function scenario(name: string, body: () => void | Promise<void>): void {
-  it(name, body);
+export function scenario(
+  name: string,
+  body: () => void | Promise<void>,
+  timeoutMs?: number,
+): void {
+  it(name, body, timeoutMs);
 }

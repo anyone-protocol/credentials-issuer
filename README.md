@@ -12,12 +12,13 @@ non-negotiable.
 
 ## Status
 
-M0.1, M0.2, M0.4, M1.1 and M1.4 complete. Issuance is **real**: the issuer blind-signs under an
+M0.1, M0.2, M0.4, M1.1, M1.3 and M1.4 complete. Issuance is **real**: the issuer blind-signs under an
 epoch RSA key with `@cloudflare/blindrsa-ts`, the harness blinds, unblinds and verifies, the
 published test vectors cross-verify against CIRCL, and the proxy's payment claim must carry a valid
-`proxy_sig` and the right amount. Still missing: epoch keys are files rather than Vault-managed and
-never rotate (M1.2), and **a valid claim can be replayed for more bundles** (see
-[docs/payment-claim.md](docs/payment-claim.md)). Do not expose this outside the sandbox.
+`proxy_sig` and the right amount. Per-epoch counters reconcile on a schedule and raise an alarm on divergence. Still missing: epoch
+keys are files rather than Vault-managed and never rotate (M1.2), and **a valid claim can be
+replayed for more bundles** (see [docs/payment-claim.md](docs/payment-claim.md)). Do not expose
+this outside the sandbox.
 
 | Endpoint | Milestone | State |
 | -------- | --------- | ----- |
@@ -25,8 +26,7 @@ never rotate (M1.2), and **a valid claim can be replayed for more bundles** (see
 | `POST /v1/bundles` | M0.1, M0.2, M1.1 | live, real RFC 9474 blind signatures |
 | `GET /v1/keys/current` | M0.1 | live, static file (Vault-backed epoch keys land in M1.2) |
 
-Next: M1.2 (epoch key lifecycle in Vault), M1.3 (aggregate accounting and the overissuance alarm),
-and M0.3 (sandbox deployment behind the TOON proxy).
+Next: M1.2 (epoch key lifecycle in Vault) and M0.3 (sandbox deployment behind the TOON proxy).
 
 ## API
 
@@ -121,6 +121,7 @@ could not happen at all. Full flag list, library API and the M1.1 upgrade path a
 | `ISSUER_PRIVATE_KEY_PATH` | `config/keys/current.pem` | Epoch signing key, PKCS#8 PEM. |
 | `PROXY_PUBLIC_KEY_PATH` | `config/keys/proxy.pub.pem` | Proxy's Ed25519 public key, SPKI PEM. |
 | `BUNDLE_PRICE` | `1.00` | Price of one bundle, exact decimal. |
+| `RECONCILIATION_INTERVAL_SECONDS` | `60` | How often the reconciliation cycle runs. |
 | `RATE_LIMIT_MAX` | `60` | Requests per sliding window, per `payment_ref`. |
 | `RATE_LIMIT_WINDOW_SECONDS` | `60` | Sliding window length. |
 
@@ -198,6 +199,43 @@ bun run scenarios      # coverage by milestone; also a CI step
 
 Tests that are not scope scenarios use plain `it()` and are free-form. Behavior that needs a
 scenario and has none is a question for the scope owner, not a scenario to add here.
+
+## Accounting and the overissuance alarm
+
+Two per-epoch counters in `epoch_counter` are written by two different code paths: `bundles_paid`
+by the payment side, `signatures_issued` by the signer, counted from the signatures actually
+produced rather than from `k`. They are only ever compared, never derived from each other, because
+reconciling two copies of the same number would catch nothing.
+
+A BullMQ job runs every `RECONCILIATION_INTERVAL_SECONDS` and raises an alarm on any divergence:
+
+| Alarm | Meaning |
+| ----- | ------- |
+| `overissuance` | More signatures issued than paid for. Theft from the redemption pool. |
+| `underissuance` | Fewer. Buyers were charged and not served. |
+| `ledger_mismatch` | `bundles_paid` disagrees with the `issuance_record` ledger. |
+
+Alarms are logged at error level naming the epoch and delta, and persisted to
+`reconciliation_alarm` so an operator can ask whether one has ever fired without searching logs.
+The counters commit in the same transaction as the purchase, so a rolled-back purchase cannot
+leave a counter behind.
+
+`bundle_size` is recorded per epoch, so changing `k` later cannot retroactively make a settled
+epoch look diverged.
+
+## Performance: blind signing is slow here
+
+`blindrsa-ts` uses WebCrypto's non-standard `RSA-RAW` where it exists (Cloudflare Workers) and
+otherwise falls back to pure-JS bignum arithmetic. Bun has no `RSA-RAW`, so **one blind signature
+costs about 280ms of blocked event loop**, and a `k=10` bundle costs roughly 2.8 seconds.
+
+That is a throughput and latency problem, not a correctness one, and it needs a decision before any
+real load: moving signing to worker threads would stop one purchase stalling health checks and
+other requests, though it would not make it faster. Invariant I1 rules out swapping the library's
+RSA operation for a native one.
+
+Signing happens *before* the recording transaction opens, so it does not hold a database connection
+while it runs; nothing is delivered unless the record commits.
 
 ## Database migrations
 
@@ -281,6 +319,7 @@ Publishing authenticates with the built-in `GITHUB_TOKEN` — no repository secr
     ├── keys/                   GET /v1/keys/current, key document schema
     ├── issuance/               the I5 retention record, and nothing more
     ├── payment/                claim parsing and verification, rate limiter
+    ├── accounting/             epoch counters, reconciliation job, alarms
     ├── config/                 k and blob sizes
     ├── signing/                RFC 9474 BlindSign under the epoch key
     ├── testing/                harness and the scope scenario coverage gate

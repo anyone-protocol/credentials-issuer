@@ -15,6 +15,7 @@ export interface IssuerConfig {
   readonly proxyPublicKeyPath: string;
   /** Price of one bundle, as an exact decimal string. */
   readonly bundlePrice: string;
+  readonly reconciliationIntervalSeconds: number;
 }
 
 function positiveInt(value: string | undefined, fallback: number, name: string): number {
@@ -37,5 +38,10 @@ export function loadIssuerConfig(env: NodeJS.ProcessEnv = process.env): IssuerCo
     rateLimitWindowSeconds: positiveInt(env.RATE_LIMIT_WINDOW_SECONDS, 60, 'RATE_LIMIT_WINDOW_SECONDS'),
     proxyPublicKeyPath: env.PROXY_PUBLIC_KEY_PATH ?? 'config/keys/proxy.pub.pem',
     bundlePrice: env.BUNDLE_PRICE ?? '1.00',
+    reconciliationIntervalSeconds: positiveInt(
+      env.RECONCILIATION_INTERVAL_SECONDS,
+      60,
+      'RECONCILIATION_INTERVAL_SECONDS',
+    ),
   };
 }

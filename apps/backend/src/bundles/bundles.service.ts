@@ -1,7 +1,8 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash } from 'node:crypto';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
+import { EpochCounters } from '../accounting/epoch-counters.service';
 import { ISSUER_CONFIG, type IssuerConfig } from '../config/issuer.config';
 import { IssuerException } from '../errors/issuer.exception';
 import { IdempotencyRecord } from '../issuance/idempotency-record.entity';
@@ -35,6 +36,7 @@ export class BundlesService {
     private readonly signer: BlindSigner,
     private readonly claims: ClaimVerifier,
     private readonly rejections: ClaimRejections,
+    private readonly epochCounters: EpochCounters,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -54,27 +56,24 @@ export class BundlesService {
     const request = validateBundleRequest(body, this.config);
     const paymentRef = claim.payment_ref;
 
+    // Signed before the transaction opens. Blind signing is CPU-bound, and
+    // holding a database connection across it exhausts the pool under load.
+    // Nothing is delivered unless the record commits, so a failure after this
+    // point still issues nothing: the buyer gets an error, not signatures.
+    const response = await this.signBundle(request);
+
     if (!idempotencyKey) {
-      return this.countAndSign((manager) => manager.insert(IssuanceRecord, {
-        paymentRef,
-        epoch: request.epoch,
-        bundleCount: 1,
-      }), request);
+      await this.record(paymentRef, request, response);
+      return response;
     }
 
     const fingerprint = fingerprintRequest(paymentRef, request);
     try {
-      return await this.countAndSign(async (manager) => {
-        await manager.insert(IdempotencyRecord, {
-          paymentRef,
-          idempotencyKey,
-          requestFingerprint: fingerprint,
-        });
-        await manager.insert(IssuanceRecord, { paymentRef, epoch: request.epoch, bundleCount: 1 });
-      }, request);
+      await this.record(paymentRef, request, response, { idempotencyKey, fingerprint });
+      return response;
     } catch (error) {
-      // Only a claimed key means replay. A signing failure, or anything else,
-      // propagates with the transaction already rolled back.
+      // Only a claimed key means replay. Anything else propagates with the
+      // transaction already rolled back.
       if (!isUniqueViolation(error)) throw error;
     }
 
@@ -87,9 +86,41 @@ export class BundlesService {
         'idempotency key was already used for a different request',
       );
     }
-    // Replay: BlindSign is deterministic, so re-signing reproduces the original
-    // response and the issuer never had to store one (I2, I5).
-    return this.signBundle(request);
+    // Replay: BlindSign is deterministic, so this is byte-identical to the
+    // original response and the issuer never had to store one (I2, I5).
+    return response;
+  }
+
+  /**
+   * The ledger row, the idempotency claim and both epoch counters commit
+   * together, so a purchase can never be half-recorded.
+   */
+  private record(
+    paymentRef: string,
+    request: BundleRequest,
+    response: BundleResponse,
+    idempotency?: { idempotencyKey: string; fingerprint: string },
+  ): Promise<void> {
+    return this.dataSource.transaction(async (manager) => {
+      if (idempotency) {
+        await manager.insert(IdempotencyRecord, {
+          paymentRef,
+          idempotencyKey: idempotency.idempotencyKey,
+          requestFingerprint: idempotency.fingerprint,
+        });
+      }
+      await manager.insert(IssuanceRecord, { paymentRef, epoch: request.epoch, bundleCount: 1 });
+      await this.epochCounters.recordBundlePaid(manager, request.epoch, this.config.bundleSize);
+
+      // Counted from what the signer actually produced, not from k. If those
+      // ever differ, reconciliation is the thing that notices (M1.3).
+      await this.epochCounters.recordSignaturesIssued(
+        manager,
+        request.epoch,
+        response.blind_signatures.length,
+        this.config.bundleSize,
+      );
+    });
   }
 
   /**
@@ -113,21 +144,6 @@ export class BundlesService {
       throw new IssuerException('CLAIM_INVALID', error.message);
     }
     return claim;
-  }
-
-  /**
-   * Records the issuance and signs in one transaction. Signing inside it is
-   * what stops a signing failure leaving a counted purchase behind: the buyer
-   * would have been charged for credentials that were never issued.
-   */
-  private countAndSign(
-    record: (manager: EntityManager) => Promise<unknown>,
-    request: BundleRequest,
-  ): Promise<BundleResponse> {
-    return this.dataSource.transaction(async (manager) => {
-      await record(manager);
-      return this.signBundle(request);
-    });
   }
 
   private async signBundle(request: BundleRequest): Promise<BundleResponse> {

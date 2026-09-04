@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { AccountingModule } from './accounting/accounting.module';
 import { BundlesModule } from './bundles/bundles.module';
 import { IssuerConfigModule } from './config/issuer-config.module';
 import { DatabaseModule } from './database/database.module';
@@ -14,6 +15,7 @@ import { QueueModule } from './queue/queue.module';
     DatabaseModule,
     QueueModule,
     KeysModule,
+    AccountingModule,
     BundlesModule,
   ],
   controllers: [HealthController],
