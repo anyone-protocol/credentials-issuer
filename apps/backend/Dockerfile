@@ -8,6 +8,7 @@ COPY apps/backend/package.json ./apps/backend/
 RUN bun install --frozen-lockfile --production
 
 COPY tsconfig.json tsconfig.base.json ./
+COPY config ./config
 COPY apps/backend ./apps/backend
 
 EXPOSE 3000

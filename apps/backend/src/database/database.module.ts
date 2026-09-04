@@ -1,7 +1,5 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ExampleController } from './example.controller';
-import { ExampleEntity } from './example.entity';
 import { buildDataSourceOptions } from './typeorm.config';
 
 @Module({
@@ -12,8 +10,6 @@ import { buildDataSourceOptions } from './typeorm.config';
         migrationsRun: process.env.DB_MIGRATIONS_RUN === 'true',
       }),
     }),
-    TypeOrmModule.forFeature([ExampleEntity]),
   ],
-  controllers: [ExampleController],
 })
 export class DatabaseModule {}

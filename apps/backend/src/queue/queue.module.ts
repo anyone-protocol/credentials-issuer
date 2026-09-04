@@ -1,9 +1,9 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { EXAMPLE_QUEUE, ExampleProcessor } from './example.processor';
-import { QueueController } from './queue.controller';
 
+// Connection only. Queues land with the jobs that need them: epoch rotation
+// (M1.2) and reconciliation (M1.3).
 @Module({
   imports: [
     BullModule.forRootAsync({
@@ -15,10 +15,7 @@ import { QueueController } from './queue.controller';
         },
       }),
     }),
-    BullModule.registerQueue({ name: EXAMPLE_QUEUE }),
   ],
-  controllers: [QueueController],
-  providers: [ExampleProcessor],
   exports: [BullModule],
 })
 export class QueueModule {}

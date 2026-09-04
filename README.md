@@ -12,16 +12,71 @@ non-negotiable.
 
 ## Status
 
-Pre-M0. The repository is the stack skeleton only; the issuer endpoints are not built yet.
+M0.1 complete: the API skeleton serves stub bundles and the static key document. Signatures are
+random blobs of the right size, not real blind signatures, and the payment claim is parsed but not
+verified. Do not expose this outside the sandbox.
 
 | Endpoint | Milestone | State |
 | -------- | --------- | ----- |
-| `GET /healthz` | — | live |
-| `POST /v1/bundles` | M0.1 | not built |
-| `GET /v1/keys/current` | M0.1 | not built |
+| `GET /healthz` | | live |
+| `POST /v1/bundles` | M0.1 | live, stub blobs (real signing lands in M1.1) |
+| `GET /v1/keys/current` | M0.1 | live, static file (Vault-backed epoch keys land in M1.2) |
 
-The `api/examples` and `api/jobs` controllers are template placeholders that prove the Postgres and
-Redis wiring. They get deleted as the real endpoints land.
+Next: M0.2 (idempotency keys, rate limiting per `payment_ref`).
+
+## API
+
+### `POST /v1/bundles`
+
+Issues exactly `k` credentials per call at one price (I3). The proxy's forwarded proof of payment
+travels in the `X-Payment-Claim` header, specified in [docs/payment-claim.md](docs/payment-claim.md).
+
+```sh
+curl -X POST localhost:3000/v1/bundles \
+  -H "content-type: application/json" \
+  -H "X-Payment-Claim: $(echo -n '{"payment_ref":"pay-1"}' | basenc --base64url -w0)" \
+  -d "{\"epoch\":\"0\",\"blinded_blanks\":[ ... k base64 strings, 256 bytes each ... ]}"
+```
+
+Response is `{ "epoch": "0", "blind_signatures": [ ... k base64 strings ... ] }`.
+
+Blanks are measured and discarded. Per invariant I2 the issuer never parses, logs or stores blank
+or signature bytes beyond validating their count and length.
+
+### `GET /v1/keys/current`
+
+Serves the static key document (I4) as `{epoch_id, not_before, not_after, alg, pubkey}`. The
+document is validated at boot, so a malformed file stops startup rather than surfacing later.
+`root_sig` is added in M1.2 when the issuer root key exists.
+
+The checked-in [config/keys/current.json](config/keys/current.json) is a development placeholder.
+Its private key was generated and discarded, so nothing can sign under it.
+
+### Typed errors
+
+All errors return `{ "error": { "code": ..., "message": ... } }`.
+
+| Code | Status | Cause |
+| ---- | ------ | ----- |
+| `REQUEST_INVALID` | 400 | Body is not an object, or `epoch` is missing. Not a scope-defined code, see [docs/payment-claim.md](docs/payment-claim.md). |
+| `BUNDLE_SIZE` | 400 | `blinded_blanks` length is not `k`. |
+| `BLANK_FORMAT` | 400 | A blank is not base64, or does not decode to exactly the configured blank size. |
+| `CLAIM_INVALID` | 402 | Payment claim missing or malformed. |
+
+Count is checked before format, so a request that is both over-count and malformed reports
+`BUNDLE_SIZE`.
+
+## Configuration
+
+`k` and the blob sizes are provisional and bind in config until the 0.3 credential spec lands
+(scope: "Inputs needed before M1 starts").
+
+| Variable | Default | Meaning |
+| -------- | ------- | ------- |
+| `BUNDLE_SIZE` | `10` | `k`, credentials per bundle. Placeholder pending 0.3. |
+| `BLANK_SIZE_BYTES` | `256` | Expected decoded size of each blinded blank (RSA-2048). |
+| `SIGNATURE_SIZE_BYTES` | `256` | Size of each returned blob (RSA-2048). |
+| `KEY_DOCUMENT_PATH` | `config/keys/current.json` | Static key document to serve. |
 
 ## Stack
 
@@ -54,7 +109,14 @@ bun run dev                 # NestJS with watch on :3000
 curl localhost:3000/healthz
 ```
 
-Run the tests with `bun test` and the typecheck with `bunx tsc --noEmit`.
+Run the tests with `bun test` and the typecheck with `bunx tsc --noEmit`. The scenario tests boot
+the real app against Postgres, so bring the backing services up first. CI provides them as service
+containers.
+
+Test names are the Gherkin scenario names from
+[docs/issuer-mvp-scope.md](docs/issuer-mvp-scope.md) verbatim, so the mapping from spec to suite
+stays checkable by eye. The scenarios are the spec of record: do not rename or add without a scope
+change.
 
 To run the service itself in a container alongside the backing services:
 
@@ -126,7 +188,16 @@ Publishing authenticates with the built-in `GITHUB_TOKEN` — no repository secr
 ├── tsconfig.base.json          shared strict TS config
 ├── compose.yml                 local backing services (redis, postgres)
 ├── compose.full.yml            the above plus the issuer in a container
+├── config/keys/current.json    static key document served by /v1/keys/current
 ├── .github/workflows/ci.yaml   test + publish image
-├── docs/issuer-mvp-scope.md    scope, invariants, BDD scenarios (spec of record)
-└── apps/backend/               NestJS service
+├── docs/
+│   ├── issuer-mvp-scope.md     scope, invariants, BDD scenarios (spec of record)
+│   └── payment-claim.md        proposed proxy claim interface, pending TOON
+└── apps/backend/src/
+    ├── bundles/                POST /v1/bundles, request validation
+    ├── keys/                   GET /v1/keys/current, key document schema
+    ├── issuance/               the I5 retention record, and nothing more
+    ├── payment/                payment claim parsing
+    ├── config/                 k and blob sizes
+    └── database/, queue/       Postgres and Redis wiring
 ```

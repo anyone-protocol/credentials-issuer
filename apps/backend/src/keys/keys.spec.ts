@@ -1,0 +1,30 @@
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { startIssuer, type IssuerHarness } from '../testing/issuer-harness';
+import { BLIND_SIGNATURE_SUITE, KEY_DOCUMENT_FIELDS } from './key-document';
+
+describe('GET /v1/keys/current', () => {
+  let harness: IssuerHarness;
+
+  beforeAll(async () => {
+    harness = await startIssuer();
+  });
+  afterAll(() => harness.close());
+
+  it('key document is served', async () => {
+    const response = await fetch(`${harness.url}/v1/keys/current`);
+
+    expect(response.status).toBe(200);
+    const doc = (await response.json()) as Record<string, string>;
+
+    // "Then the response matches the 0.3 consensus-publication schema" — pinned
+    // to the field list the scope doc states for M1.2, minus root_sig which
+    // M1.2 adds. Recheck when the real 0.3 schema lands.
+    expect(Object.keys(doc).sort()).toEqual([...KEY_DOCUMENT_FIELDS].sort());
+
+    // "And includes epoch_id, validity window, alg, and pubkey"
+    expect(doc.epoch_id).toBeString();
+    expect(Date.parse(doc.not_before!)).toBeLessThan(Date.parse(doc.not_after!));
+    expect(doc.alg).toBe(BLIND_SIGNATURE_SUITE);
+    expect(Buffer.from(doc.pubkey!, 'base64').byteLength).toBeGreaterThan(0);
+  });
+});
