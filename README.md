@@ -139,7 +139,14 @@ Rotation is operator-driven today. The intent is a Nomad periodic batch job with
 Vault role, which is also why it is a separate tool rather than a job inside the issuer: one runner
 by construction, so no distributed lock, and the issuer's Vault policy stays read-only.
 
-Nothing here is committed. `config/keys/` is gitignored.
+Nothing here is committed: `config/keys/` is gitignored as a whole directory, and the tests
+regenerate it on a fresh clone.
+
+> The dev keyring **was** committed between M1.2 and this note (commits `f1b529d`..`b86c075`),
+> because the ignore rule listed filenames and M1.2 renamed the file. That key is burned: it is in
+> the public history forever, so never deploy a keyring generated before 2026-09-04, and treat any
+> epoch signed by it as forgeable. The root key was never committed, so no one can mint epochs with
+> it.
 
 ## Buyer harness
 

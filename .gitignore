@@ -5,5 +5,7 @@ dist/
 .claude
 
 # Development epoch keys. Stage and live get theirs from Vault.
-config/keys/*.pem
-config/keys/current.json
+# The whole directory, not a list of filenames: an earlier list named
+# current.json, M1.2 renamed that to keyring.json, and the dev signing key was
+# committed for four commits as a result.
+config/keys/
