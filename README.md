@@ -123,6 +123,28 @@ issuance down mid-flight.
 
 `root_sig` is a placeholder for dirauth consensus signing.
 
+### Why Vault holds keys but does not sign
+
+The scope leaves this open as "transit or KV+app-level, decide in M1.2". It is KV, and the reason is
+a hard limit rather than a preference: **Vault's transit engine cannot perform BlindSign.**
+
+RFC 9474 needs the raw RSA private operation on the blinded message -- `m^d mod n`, no padding, no
+hashing, because the client already did the PSS encoding before blinding. Transit's sign endpoint
+only offers complete signature schemes over a digest; it has no raw mode to call. So a design where
+Vault holds the key and does the signing is not blocked on effort, it is blocked on a primitive that
+does not exist there.
+
+Two things would have to change to revisit it: something in the signing path that exposes a raw or
+no-padding RSA operation (a PKCS#11 HSM can, transit cannot), and an answer on latency, since every
+signature would become a network round trip -- `k` of them per purchase, against 12-29 ms for a
+whole bundle locally.
+
+Vault *generating* the epoch keypair is a separate and smaller question, and is compatible with what
+is here: the rotation job could ask Vault for the key material instead of generating it. That only
+moves where the key is born, not where it signs. If any of this is revisited, the change is
+contained: the issuer's raw operation is behind `SignerPool` and nothing above it knows how signing
+happens.
+
 ### Rotating
 
 The root private key is **never** given to the issuer. Only the rotation tool holds it, so a
