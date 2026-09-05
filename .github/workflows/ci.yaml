@@ -13,7 +13,7 @@ on:
         type: boolean
         default: false
       conformance_url:
-        description: 'Run the buyer harness against this URL (the TOON proxy, for M0.3)'
+        description: 'Check the key document of a deployed issuer at this URL'
         type: string
         default: ''
 
@@ -135,9 +135,9 @@ jobs:
           # just built rather than letting that default decide what deploys.
           ./nomad job run -var="commit_sha=${GITHUB_SHA}" operations/credentials-issuer-stage.hcl
 
-  # M0.3's scenario: the buyer harness driving request -> 402 -> pay -> retry against a deployed
-  # issuer behind the TOON proxy. It needs a running sandbox, so it is dispatched with a URL
-  # rather than run on every push. See docs/deployment.md.
+  # A post-deploy smoke check, dispatched with a URL rather than run on every push. It is NOT M0.3's
+  # scenario: buying needs the fronting proxy's signing key, so nothing outside that proxy can drive
+  # a purchase. This checks what an unpaying caller can reach. See docs/deployment.md.
   conformance:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.conformance_url != '' }}
     runs-on: ubuntu-latest
@@ -151,5 +151,5 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Buy a bundle through the proxy
-        run: bun run harness --url "${{ inputs.conformance_url }}" --payment stub-receipt
+      - name: Check the deployed key document
+        run: bun run harness --url "${{ inputs.conformance_url }}" --keys-only

@@ -42,7 +42,6 @@ describe('402 payment flow', () => {
 
     const result = await purchaseBundle({
       baseUrl: proxy.url,
-      paymentRef: 'unused-behind-a-proxy',
       payment: new StubReceiptProvider(),
       parameters: parameters(),
     });
@@ -57,7 +56,6 @@ describe('402 payment flow', () => {
   it('reports direct flow when talking to an issuer with no proxy in front', async () => {
     const result = await purchaseBundle({
       baseUrl: issuer.url,
-      paymentRef: 'pay-direct-1',
       payment: await createStubClaimProvider(
         { payment_ref: 'pay-direct-1', amount: '1.00', route_id: 'route-1' },
         proxyKeyPem,
@@ -75,7 +73,6 @@ describe('402 payment flow', () => {
     await expect(
       purchaseBundle({
         baseUrl: issuer.url,
-        paymentRef: 'pay-wrong-amount',
         payment: await createStubClaimProvider(
           { payment_ref: 'pay-wrong-amount', amount: '0.01', route_id: 'route-1' },
           proxyKeyPem,
@@ -97,7 +94,6 @@ describe('402 payment flow', () => {
       await expect(
         purchaseBundle({
           baseUrl: proxy.url,
-          paymentRef: 'pay-x',
           payment,
           parameters: parameters(),
         }),

@@ -22,7 +22,7 @@ export const IMPLEMENTED_MILESTONES = new Set(['M0.1', 'M0.2', 'M0.4', 'M1.1', '
  * carrying a gap that will never close.
  */
 export const MANUAL_MILESTONES = new Map([
-  ['M0.3', 'needs the sandbox deployed behind the TOON proxy; see docs/deployment.md'],
+  ['M0.3', 'needs the sandbox deployed behind the TOON connector; see docs/deployment.md'],
 ]);
 
 export interface ScopeScenario {

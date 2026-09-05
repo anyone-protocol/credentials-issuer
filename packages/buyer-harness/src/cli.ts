@@ -12,7 +12,7 @@ import {
   type PaymentProvider,
 } from './payment';
 import { failures } from './conformance';
-import { purchaseBundle } from './purchase';
+import { checkKeys, purchaseBundle } from './purchase';
 import { DEFAULT_BUNDLE_PARAMETERS } from './types';
 
 const EXIT_OK = 0;
@@ -39,6 +39,10 @@ Buys one bundle and judges the response against the issuer contract.
                            synthetic claim; stub-receipt runs the full
                            request -> 402 -> pay -> retry flow through a proxy,
                            with the payment itself stubbed; none sends nothing
+  --keys-only              check the key document and stop, buying nothing.
+                           The only conformance an outside caller can run
+                           against a deployment: purchasing needs the fronting
+                           proxy's signing key.
   --json                   emit the report as JSON
   --help
 
@@ -91,6 +95,7 @@ async function main(): Promise<number> {
       'proxy-key': { type: 'string' },
       amount: { type: 'string' },
       'route-id': { type: 'string' },
+      'keys-only': { type: 'boolean', default: false },
       json: { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
     },
@@ -107,6 +112,19 @@ async function main(): Promise<number> {
     return EXIT_UNUSABLE;
   }
 
+  if (values['keys-only']) {
+    const { keyDocument, conformance } = await checkKeys({ baseUrl: values.url });
+    if (values.json) {
+      console.log(JSON.stringify({ epoch: keyDocument.epoch_id, conformance }, null, 2));
+    } else {
+      for (const check of conformance.checks) {
+        console.log(`${check.passed ? 'PASS' : 'FAIL'}  ${check.name}: ${check.detail}`);
+      }
+      console.log('\nbought nothing (--keys-only)');
+    }
+    return failures(conformance).length === 0 ? EXIT_OK : EXIT_NONCONFORMING;
+  }
+
   const paymentRef = values['payment-ref'] ?? `harness-${randomUUID()}`;
   const payment = await paymentProvider(
     values.payment ?? 'stub-claim',
@@ -121,7 +139,6 @@ async function main(): Promise<number> {
   const result = await purchaseBundle({
     payment,
     baseUrl: values.url,
-    paymentRef,
     idempotencyKey: values['idempotency-key'],
     epoch: values.epoch,
     parameters: {

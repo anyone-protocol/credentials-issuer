@@ -26,7 +26,6 @@ export type PaymentFlow = 'direct' | '402-retry';
 
 export interface IssuerClientOptions {
   readonly baseUrl: string;
-  readonly paymentRef: string;
   readonly idempotencyKey?: string;
   /** Defaults to sending nothing: a claim must be signed, so it cannot be invented here. */
   readonly payment?: PaymentProvider;

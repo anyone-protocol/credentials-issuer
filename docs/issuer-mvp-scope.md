@@ -64,13 +64,16 @@ Scenario: rate limit is per payment_ref
   And requests carrying other payment_refs are unaffected
 ```
 
-**M0.3 Sandbox deployment.** Dockerfile + Nomad job, deployed behind the TOON proxy route against Sepolia.
+**M0.3 Sandbox deployment.** Dockerfile + Nomad job, deployed behind the TOON connector route on the integration sandbox.
+
+*Reworded 2026-09-04.* The original said "the stub", "the TOON proxy" and "request → 402 → pay $ANYONE → retry". Issuance is real since M1, the proxy role is filled by a connector plus a claim minter, and the 402 pay-and-retry flow was withdrawn: buying credentials is not a discovery flow, so payment is collected as part of the request. See docs/toon-runbook.md.
 
 ```gherkin
-Scenario: end-to-end conformance through the TOON proxy
-  Given the stub deployed behind the TOON proxy on the Sepolia sandbox
-  When the buyer harness runs the full flow (request → 402 → pay $ANYONE → retry)
-  Then the harness receives exactly k blobs of the configured size
+Scenario: end-to-end conformance through the TOON connector
+  Given the issuer deployed behind the TOON connector and claim minter
+  When a buyer pays for a bundle in $ANYONE and submits k blinded blanks
+  Then it receives exactly k blobs of the configured size
+  And every credential verifies under the published epoch key
 ```
 
 **M0.4 Headless buyer harness.** Library + CLI, not a one-off script (seed of the future agent SDK; also TOON's conformance tool).

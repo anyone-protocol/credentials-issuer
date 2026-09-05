@@ -21,7 +21,6 @@ describe('real blind issuance', () => {
 
     const result = await purchaseBundle({
       baseUrl: issuer.url,
-      paymentRef: 'pay-blind-1',
       payment: await createStubClaimProvider(
         { payment_ref: 'pay-blind-1', amount: '1.00', route_id: 'route-1' },
         await readFile(DEV_PROXY_KEY_PEM, 'utf8'),

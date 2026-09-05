@@ -7,7 +7,12 @@ import {
   report,
   type ConformanceReport,
 } from './conformance';
-import { DEFAULT_BUNDLE_PARAMETERS, type BundleParameters, type BundleResponse } from './types';
+import {
+  DEFAULT_BUNDLE_PARAMETERS,
+  type BundleParameters,
+  type BundleResponse,
+  type KeyDocument,
+} from './types';
 
 export interface PurchaseOptions extends IssuerClientOptions {
   readonly parameters?: BundleParameters;
@@ -24,6 +29,18 @@ export interface PurchaseResult {
   /** Empty when the signatures could not be unblinded. */
   readonly credentials: readonly IssuedCredential[];
   readonly conformance: ConformanceReport;
+}
+
+/**
+ * Checks only what an unpaying caller can reach: the key document. Useful after
+ * a deploy, where buying needs the fronting proxy's signing key and so cannot
+ * be driven from outside it.
+ */
+export async function checkKeys(
+  options: IssuerClientOptions,
+): Promise<{ keyDocument: KeyDocument; conformance: ConformanceReport }> {
+  const keyDocument = await new IssuerClient(options).keyDocument();
+  return { keyDocument, conformance: report(checkKeyDocument(keyDocument).checks) };
 }
 
 /**

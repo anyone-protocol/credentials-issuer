@@ -20,7 +20,7 @@ export {
   report,
 } from './conformance';
 export type { CheckResult, ConformanceReport } from './conformance';
-export { purchaseBundle } from './purchase';
+export { checkKeys, purchaseBundle } from './purchase';
 export type { PurchaseOptions, PurchaseResult } from './purchase';
 export { DEFAULT_BUNDLE_PARAMETERS } from './types';
 export type {

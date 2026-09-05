@@ -119,32 +119,37 @@ rename are at the old `credential-issuer` path and were not copied over.
 
 ## The M0.3 conformance run
 
-The scenario is the buyer harness driving `request -> 402 -> pay $ANYONE -> retry` against the
-deployed issuer behind the TOON proxy, and receiving exactly `k` blobs of the configured size:
+The scenario is a buyer paying for a bundle through the TOON connector and receiving `k` blobs that
+verify under the published epoch key. **We cannot drive it from here.** Payment is collected over ILP
+inside the connector, and minting a claim needs the proxy's signing key, which the issuer only ever
+holds the public half of. The buyer that drives it is
+[anytoon's](https://github.com/toon-protocol/anytoon) -- `make buy`, or `make local-e2e` for the whole
+loop on a local chain.
+
+Our buyer harness still speaks the withdrawn 402 pay-and-retry flow, so it cannot drive a TOON stack;
+see [toon-runbook.md](toon-runbook.md).
+
+What we *can* run against a deployment, and should after every deploy:
 
 ```sh
-bun run harness --url <TOON proxy url> --payment stub-receipt
+bun run harness --url <issuer url> --keys-only
 ```
 
-Or run the CI workflow with `conformance_url` set to the proxy URL. It exits nonzero naming the
-assertion that failed, so it is usable as a smoke test after every deploy.
+It checks the key document an unpaying caller can reach -- fields, suite, validity window -- and
+exits nonzero naming what failed. The CI workflow does the same when dispatched with a
+`conformance_url`. Pair it with `GET /healthz`, which returns 503 once no epoch key can sign.
 
-Point it at the **proxy**, not the issuer: `stub-receipt` expects the 402. Against a bare issuer
-use `--payment stub-claim --proxy-key <path>` instead, which skips the payment flow and signs a
-claim directly.
+### Rehearsing a purchase without TOON
 
-### Rehearsing it without TOON
-
-The 402 half can be stood up locally, so the deployed artifact can be exercised before the proxy
-route exists:
+The withdrawn flow can still be stood up locally, which exercises real blind signing end to end even
+though nobody will deploy it:
 
 ```sh
 bun run fake-proxy --issuer <issuer url> --port 3110   # settles nothing, accepts any receipt
 bun run harness --url http://localhost:3110 --payment stub-receipt
 ```
 
-This proves everything except on-chain settlement and TOON's own claim minting. It is a rehearsal,
-not the scenario: the scenario is only met against the real proxy on Sepolia.
+This proves issuance, not conformance: the scenario is met only against the real connector.
 
 ## Configuration
 
