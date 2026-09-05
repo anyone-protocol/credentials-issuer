@@ -4,8 +4,10 @@
   "workspaces": {
     "": {
       "name": "credential-issuer",
-      "devDependencies": {
+      "dependencies": {
         "@cloudflare/blindrsa-ts": "^0.4.6",
+      },
+      "devDependencies": {
         "@nestjs/testing": "^11.0.0",
         "@types/bun": "^1.2.0",
         "typescript": "^5.8.0",

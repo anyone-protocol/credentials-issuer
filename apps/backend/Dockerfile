@@ -12,6 +12,9 @@ RUN bun install --frozen-lockfile --production
 
 COPY tsconfig.json tsconfig.base.json ./
 COPY apps/backend ./apps/backend
+# The epoch rotation tool runs from this image as a periodic Nomad job. It is
+# inert without the root key, which only that job is given.
+COPY scripts ./scripts
 
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \

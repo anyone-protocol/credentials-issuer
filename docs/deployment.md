@@ -8,6 +8,7 @@ namespace on the `ator-fin` datacenter:
 | `credentials-issuer-postgres-stage` | Postgres 18, on a host volume. The aggregates and the entitlement store. |
 | `credentials-issuer-redis-stage` | Redis 7, deliberately ephemeral. Rate-limit windows and the reconciliation schedule. |
 | `credentials-issuer-stage` | The issuer. A prestart task runs migrations, then the service starts. |
+| `credentials-issuer-rotate-epoch-stage` | Weekly periodic batch. Rotates the epoch keyring in Vault. |
 
 Backing stores first, then the issuer: the issuer's templates block until both register in Consul.
 
@@ -31,8 +32,16 @@ client. Nothing else needs storage; Redis holds no source of truth, which is why
 | Key | Value |
 | --- | ----- |
 | `DB_USER`, `DB_PASS` | The same credentials; the issuer connects with them. |
-| `KEYRING_BASE64` | The epoch keyring, base64 of the JSON file. Contains **private** epoch keys. |
+| `KEYRING_BASE64` | The epoch keyring, base64 of the JSON file. Contains **private** epoch keys. Written by the rotation job. |
 | `PROXY_PUBLIC_KEY_BASE64` | The TOON proxy's Ed25519 public key, base64 of the SPKI PEM. |
+
+**Vault, `kv/stage-services/credentials-issuer-rotation-stage`** — a separate path, readable only by
+the rotation job:
+
+| Key | Value |
+| --- | ----- |
+| `ROOT_KEY_BASE64` | The issuer root private key, base64 of the PKCS#8 PEM. The issuer must not be able to read this. |
+| `VAULT_ADDR` | The address the rotation job writes `KEYRING_BASE64` back to. |
 
 **GitHub secrets**, for the manual deploy job: `NOMAD_ADDR` and
 `NOMAD_TOKEN_CREDENTIALS_ISSUER_DEPLOY`. The Nomad CA is committed at
@@ -52,11 +61,42 @@ For a real sandbox, replace the stand-in proxy key with TOON's actual public key
 `config/keys/root.pem` somewhere the cluster cannot reach. Losing it means no further rotations;
 leaking it means anyone can mint epoch documents the issuer will trust.
 
-Rotation is the same tool against the same file, followed by re-writing `KEYRING_BASE64`:
+Rotation by hand is the same tool against the same file, followed by re-writing `KEYRING_BASE64`:
 
 ```sh
 bun run rotate-epoch --keyring config/keys/keyring.json --root-key config/keys/root.pem
 ```
+
+In the cluster the periodic job does it against Vault directly, which is a read-modify-write on one
+field guarded by a compare-and-set, so it preserves the database credentials sharing the path and
+fails rather than clobbering a rotation that landed first.
+
+## Rotation, and why it is not optional
+
+**Nothing rotates the keyring by itself outside the cluster.** Left alone, the current epoch reaches
+its `not_after`, the issuer keeps serving a key document nobody can buy against, every purchase
+returns `WRONG_EPOCH`, and the service otherwise looks fine. `GET /healthz` is what catches this: it
+returns **503** once the advertised epoch has expired, and reports `expires_in_seconds` while it has
+not, so a check can alarm before issuance stops. The issuer also logs a warning on every keyring
+reload inside the last day.
+
+A failing health check will make Nomad restart and eventually reschedule the alloc, which does not
+fix an expired keyring. That is intended: the job going red is the alarm, and a rotation is the fix.
+
+`credentials-issuer-rotate-epoch-stage` runs `@weekly` with `prohibit_overlap`. Two parameters are
+worth understanding:
+
+- **The cron period is the effective epoch length**, and therefore the anonymity set every credential
+  issued during it belongs to. This is decision 2 in
+  [credential-parameters.md](credential-parameters.md); the weekly default is a placeholder.
+- **`--epoch-seconds` is a ceiling, not the period.** Four weeks against a weekly cron means three
+  weeks of tolerance for a broken rotation job before issuance actually stops.
+
+The rotation job needs its own Vault path, `kv/stage-services/credentials-issuer-rotation-stage`,
+holding `ROOT_KEY_BASE64` and `VAULT_ADDR`. **Its policy must be separate from the issuer's.** The
+issuer never holding the root key is the reason a compromised issuer can abuse the current epoch key
+but cannot mint epochs or forge a key document, and that invariant is a Vault policy, not something
+this repo can enforce.
 
 The keyring template is `change_mode = "noop"` because the issuer re-reads the file every
 `KEYRING_RELOAD_SECONDS`. A rotation therefore lands without restarting anything, and the outgoing

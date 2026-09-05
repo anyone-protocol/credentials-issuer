@@ -11,12 +11,24 @@ import {
   type EpochEntry,
   type Keyring,
 } from './keyring';
-import { importRootPublicKey, verifyKeyDocument } from './root-key';
+import { verifyKeyringSignatures } from './root-key';
 
 export interface EpochKeyMaterial {
   readonly epoch: string;
   readonly privateKeyPem: string;
 }
+
+export interface SigningHealth {
+  /** The epoch advertised at GET /v1/keys/current. */
+  readonly epoch: string;
+  /** False once that epoch's window has closed: purchases against it fail. */
+  readonly usable: boolean;
+  /** Negative once it has expired. */
+  readonly expiresInSeconds: number;
+}
+
+/** Below this, the current epoch is logged as needing a rotation. */
+const EXPIRY_WARNING_SECONDS = 86_400;
 
 /**
  * Holds the epoch keyring and keeps it current without a restart.
@@ -59,6 +71,21 @@ export class KeysService implements OnModuleInit, OnModuleDestroy {
     return usableEpoch(this.require(), epochId);
   }
 
+  /**
+   * Whether a buyer following the documented flow can still complete a
+   * purchase: read the current key document, blind against it, and be signed.
+   * Nothing rotates the keyring by itself, so this going false is the failure
+   * the periodic rotation job exists to prevent. See docs/deployment.md.
+   */
+  signingHealth(at = new Date()): SigningHealth {
+    const epoch = currentEpoch(this.require());
+    return {
+      epoch: epoch.epoch_id,
+      usable: usableEpoch(this.require(), epoch.epoch_id, at) !== null,
+      expiresInSeconds: Math.round((Date.parse(epoch.not_after) - at.getTime()) / 1000),
+    };
+  }
+
   keyMaterial(): EpochKeyMaterial[] {
     return this.require().epochs.map((epoch) => ({
       epoch: epoch.epoch_id,
@@ -94,7 +121,7 @@ export class KeysService implements OnModuleInit, OnModuleDestroy {
     let keyring: Keyring;
     try {
       keyring = parseKeyring(JSON.parse(raw));
-      await this.verifyRootSignatures(keyring);
+      await verifyKeyringSignatures(keyring);
     } catch (cause) {
       const message = `invalid keyring at ${path}: ${(cause as Error).message}`;
       // A bad keyring must not take the issuer down mid-flight: a rotation that
@@ -111,19 +138,20 @@ export class KeysService implements OnModuleInit, OnModuleDestroy {
       `${initial ? 'loaded' : 'reloaded'} keyring: current epoch ${keyring.current_epoch}, usable [${epochs}]`,
     );
     for (const listener of this.listeners) listener(this.keyMaterial());
+    this.warnIfExpiring();
   }
 
   /**
-   * Every epoch's document must verify under the root key, not just the current
-   * one: an unsigned or edited entry would let a forged key sign credentials.
+   * Expiry is silent otherwise: the issuer keeps serving a key document nobody
+   * can buy against, and /healthz is the only thing that notices, by which
+   * point issuance has already stopped.
    */
-  private async verifyRootSignatures(keyring: Keyring): Promise<void> {
-    const rootPublicKey = await importRootPublicKey(keyring.root_public_key_spki);
-    for (const epoch of keyring.epochs) {
-      const document = publishedDocument(epoch);
-      if (!(await verifyKeyDocument(document, epoch.root_sig, rootPublicKey))) {
-        throw new Error(`epoch ${epoch.epoch_id} root_sig does not verify under the root key`);
-      }
+  private warnIfExpiring(): void {
+    const { epoch, usable, expiresInSeconds } = this.signingHealth();
+    if (!usable) {
+      this.logger.error(`epoch ${epoch} is not usable: nothing can be signed until a rotation`);
+    } else if (expiresInSeconds < EXPIRY_WARNING_SECONDS) {
+      this.logger.warn(`epoch ${epoch} expires in ${expiresInSeconds}s and nothing has rotated it`);
     }
   }
 }

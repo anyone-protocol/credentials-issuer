@@ -1,10 +1,13 @@
 /**
- * Rotates the epoch keyring.
+ * Rotates the epoch keyring, in a file or in Vault.
  *   bun run rotate-epoch [--keyring <path>] [--root-key <path>]
  *                        [--epoch-seconds N] [--grace-seconds N]
+ *   bun run rotate-epoch --vault-secret kv/stage-services/credentials-issuer-stage
+ *                        [--vault-addr <url>] [--vault-field KEYRING_BASE64]
  *
- * Operator-driven for now; the intent is a Nomad periodic batch job with a
- * write-capable Vault role. It is deliberately a separate tool from the issuer:
+ * Vault mode reads VAULT_TOKEN from the environment and is what the periodic
+ * Nomad job runs; see docs/deployment.md. It is deliberately a separate tool
+ * from the issuer:
  * the issuer never holds the root private key, so a compromised issuer can
  * abuse the current epoch key but cannot mint epochs or forge a key document.
  *
@@ -19,6 +22,8 @@ import { BLIND_SIGNATURE_SUITE } from '../apps/backend/src/keys/key-document';
 import { derToPkcs8Pem, derToSpkiPem } from '../apps/backend/src/keys/pem';
 import { importRootSigningKey, signKeyDocument } from '../apps/backend/src/keys/root-key';
 import { parseKeyring, type EpochEntry, type Keyring } from '../apps/backend/src/keys/keyring';
+import { verifyKeyringSignatures } from '../apps/backend/src/keys/root-key';
+import { readSecret, writeSecret, type VaultOptions } from './vault-kv';
 
 export interface RotateOptions {
   readonly keyringPath: string;
@@ -28,15 +33,38 @@ export interface RotateOptions {
   readonly now?: Date;
 }
 
-export async function rotateEpoch(options: RotateOptions): Promise<Keyring> {
-  const now = options.now ?? new Date();
-  const rootPem = await Bun.file(options.rootKeyPath).text();
-  const rootKey = await importRootSigningKey(rootPem);
-  const rootPublicSpki = await rootPublicKeySpki(rootPem);
+export interface RotateSchedule {
+  readonly epochSeconds: number;
+  readonly graceSeconds: number;
+  readonly now?: Date;
+}
 
+export async function rotateEpoch(options: RotateOptions): Promise<Keyring> {
   const existing = (await Bun.file(options.keyringPath).exists())
     ? parseKeyring(JSON.parse(await Bun.file(options.keyringPath).text()))
     : null;
+
+  const keyring = await nextKeyring(
+    existing,
+    await Bun.file(options.rootKeyPath).text(),
+    options,
+  );
+  await writeAtomically(options.keyringPath, `${JSON.stringify(keyring, null, 2)}\n`);
+  return keyring;
+}
+
+/**
+ * The rotation itself, with no storage attached, so the file and Vault paths
+ * cannot drift apart in what they produce.
+ */
+export async function nextKeyring(
+  existing: Keyring | null,
+  rootPem: string,
+  options: RotateSchedule,
+): Promise<Keyring> {
+  const now = options.now ?? new Date();
+  const rootKey = await importRootSigningKey(rootPem);
+  const rootPublicSpki = await rootPublicKeySpki(rootPem);
 
   const nextId = existing ? String(Number(existing.current_epoch) + 1) : '0';
   if (Number.isNaN(Number(nextId))) {
@@ -77,7 +105,48 @@ export async function rotateEpoch(options: RotateOptions): Promise<Keyring> {
     epochs: [fresh, ...retained],
   };
 
-  await writeAtomically(options.keyringPath, `${JSON.stringify(keyring, null, 2)}\n`);
+  // The issuer refuses a keyring whose signatures do not verify, and refusing
+  // one on reload means the old keys keep signing. Checking here means we
+  // never publish a rotation the issuer would reject and nobody would notice.
+  await verifyKeyringSignatures(keyring);
+  return keyring;
+}
+
+export interface VaultRotateOptions extends RotateSchedule {
+  readonly vault: VaultOptions;
+  /** KV field holding the base64 keyring, alongside whatever else lives there. */
+  readonly field: string;
+  readonly rootKeyPath: string;
+}
+
+/**
+ * Rotates the keyring Vault holds, in place. Read-modify-write with a
+ * compare-and-set: the same path carries the database credentials and the
+ * proxy public key, so writing only the keyring field would delete them, and a
+ * second rotation racing this one must fail rather than lose an epoch.
+ *
+ * The root private key is a file rendered by Nomad, never fetched here, so this
+ * needs a Vault token that can write one path and read nothing sensitive.
+ */
+export async function rotateInVault(options: VaultRotateOptions): Promise<Keyring> {
+  const { data, version } = await readSecret(options.vault);
+
+  const encoded = data[options.field];
+  const existing = encoded
+    ? parseKeyring(JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')))
+    : null;
+
+  const keyring = await nextKeyring(
+    existing,
+    await Bun.file(options.rootKeyPath).text(),
+    options,
+  );
+
+  await writeSecret(
+    options.vault,
+    { ...data, [options.field]: Buffer.from(JSON.stringify(keyring, null, 2)).toString('base64') },
+    version,
+  );
   return keyring;
 }
 
@@ -132,17 +201,40 @@ if (import.meta.main) {
       'root-key': { type: 'string', default: 'config/keys/root.pem' },
       'epoch-seconds': { type: 'string', default: String(30 * 86_400) },
       'grace-seconds': { type: 'string', default: String(86_400) },
+      'vault-secret': { type: 'string' },
+      'vault-addr': { type: 'string', default: process.env.VAULT_ADDR },
+      'vault-field': { type: 'string', default: 'KEYRING_BASE64' },
     },
     strict: true,
   });
 
-  const keyring = await rotateEpoch({
-    keyringPath: values.keyring!,
-    rootKeyPath: values['root-key']!,
+  const schedule = {
     epochSeconds: Number(values['epoch-seconds']),
     graceSeconds: Number(values['grace-seconds']),
-  });
-  console.log(
-    `rotated to epoch ${keyring.current_epoch}; ${keyring.epochs.length} epoch(s) usable`,
-  );
+  };
+  const rootKeyPath = values['root-key']!;
+
+  let keyring: Keyring;
+  if (values['vault-secret']) {
+    const addr = values['vault-addr'];
+    const token = process.env.VAULT_TOKEN;
+    if (!addr) throw new Error('--vault-secret needs --vault-addr or VAULT_ADDR');
+    if (!token) throw new Error('--vault-secret needs VAULT_TOKEN in the environment');
+
+    keyring = await rotateInVault({
+      ...schedule,
+      vault: { addr, token, secret: values['vault-secret'] },
+      field: values['vault-field']!,
+      rootKeyPath,
+    });
+    console.log(
+      `rotated to epoch ${keyring.current_epoch} in ${values['vault-secret']}; ` +
+        `${keyring.epochs.length} epoch(s) usable`,
+    );
+  } else {
+    keyring = await rotateEpoch({ ...schedule, keyringPath: values.keyring!, rootKeyPath });
+    console.log(
+      `rotated to epoch ${keyring.current_epoch}; ${keyring.epochs.length} epoch(s) usable`,
+    );
+  }
 }

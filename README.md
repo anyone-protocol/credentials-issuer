@@ -26,7 +26,7 @@ sandbox.
 
 | Endpoint | Milestone | State |
 | -------- | --------- | ----- |
-| `GET /healthz` | | live |
+| `GET /healthz` | | live, 503 when no epoch key can sign |
 | `POST /v1/bundles` | M0.1, M0.2, M1.1 | live, real RFC 9474 blind signatures |
 | `GET /v1/keys/current` | M0.1, M1.2 | live, from the Vault-rendered keyring |
 | `POST /v1/entitlements` | M2.1 | live, **mocked** receipt validation |
@@ -135,9 +135,20 @@ bun run rotate-epoch        # advance the epoch, retiring the previous one into 
   --epoch-seconds 2592000 --grace-seconds 86400
 ```
 
-Rotation is operator-driven today. The intent is a Nomad periodic batch job with a write-capable
-Vault role, which is also why it is a separate tool rather than a job inside the issuer: one runner
-by construction, so no distributed lock, and the issuer's Vault policy stays read-only.
+Rotation runs by hand against a file, or `--vault-secret <mount/path>` against Vault directly, which
+is what the weekly `credentials-issuer-rotate-epoch-stage` job does. Vault mode is a
+read-modify-write on one field with a compare-and-set, so it preserves the other secrets at that
+path and fails rather than clobbering a rotation that landed first.
+
+It is a separate tool rather than a job inside the issuer because the issuer's Vault policy stays
+read-only: only the rotation job can reach the root key, so a compromised issuer can abuse the
+current epoch key but cannot mint epochs.
+
+**Nothing rotates by itself outside the cluster, and expiry is silent.** Left alone, the current
+epoch reaches its `not_after` and the issuer keeps serving a key document nobody can buy against
+while every purchase returns `WRONG_EPOCH`. `GET /healthz` returns **503** once that happens, and
+reports `expires_in_seconds` while it has not, so a check can alarm before issuance stops. See
+[docs/deployment.md](docs/deployment.md).
 
 Nothing here is committed: `config/keys/` is gitignored as a whole directory, and the tests
 regenerate it on a fresh clone. These are throwaway keys for local runs and are never a deployment
@@ -493,7 +504,7 @@ same dispatch takes a `conformance_url` to run the buyer harness against a deplo
 ├── config/keys/                epoch key + key document, gitignored, mounted at runtime
 ├── scripts/scenario-report.ts  scope scenario coverage by milestone
 ├── scripts/fake-proxy.ts       stands in for the TOON proxy to rehearse the 402 flow
-├── operations/                 Nomad jobspecs: issuer, postgres, redis (stage)
+├── operations/                 Nomad jobspecs: issuer, postgres, redis, epoch rotation (stage)
 ├── .github/workflows/ci.yaml   test, publish image, manual deploy + conformance
 ├── docs/
 │   ├── issuer-mvp-scope.md     scope, invariants, BDD scenarios (spec of record)

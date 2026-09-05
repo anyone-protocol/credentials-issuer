@@ -16,8 +16,10 @@
     "rotate-epoch": "bun scripts/rotate-epoch.ts",
     "fake-proxy": "bun scripts/fake-proxy.ts"
   },
+  "dependencies": {
+    "@cloudflare/blindrsa-ts": "^0.4.6"
+  },
   "devDependencies": {
-    "@cloudflare/blindrsa-ts": "^0.4.6",
     "@nestjs/testing": "^11.0.0",
     "@types/bun": "^1.2.0",
     "typescript": "^5.8.0"
