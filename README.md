@@ -19,6 +19,10 @@ payment claim must carry a valid `proxy_sig` and the right amount. Per-epoch cou
 a schedule and raise an alarm on divergence. Epoch keys rotate with a grace window and no restart.
 Both payment rails, crypto and fiat, issue through one code path.
 
+TOON has an integration running at [toon-protocol/anytoon](https://github.com/toon-protocol/anytoon):
+a connector collecting ILP payment, a claim minter, and this image consumed unmodified. The claim
+wire format is settled and byte-identical on both sides.
+
 Still missing: **a valid claim can be replayed for more bundles** (see
 [docs/payment-claim.md](docs/payment-claim.md)), and **receipt validation is a stub that accepts
 anything** (see [the fiat rail](#the-fiat-rail-entitlement-drip)). Do not expose this outside the
@@ -533,7 +537,7 @@ same dispatch takes a `conformance_url` to run the buyer harness against a deplo
 │   ├── toon-runbook.md         run it, drive a purchase, implement the proxy side
 │   ├── deployment.md           Nomad jobs, Vault secrets, deploying, the M0.3 conformance run
 │   ├── credential-parameters.md  k, epoch length, serial and schema: decisions still open
-│   ├── payment-claim.md        proposed proxy claim interface, pending TOON
+│   ├── payment-claim.md        the proxy claim interface, settled with TOON
 │   ├── buyer-harness.md        harness CLI, library API, conformance checks
 │   └── test-vectors.md         published RFC 9474 vectors and how they cross-verify
 ├── test-vectors/               committed vectors, checked by both implementations

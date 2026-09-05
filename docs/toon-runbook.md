@@ -81,6 +81,11 @@ Verification happens before rate limiting, so a claim we cannot verify never spe
 
 ## Interface 2: the 402 you give buyers
 
+> **Nobody implements this.** [anytoon](https://github.com/toon-protocol/anytoon) collects payment
+> over ILP in the connector, before the request reaches the issuer, so there is no 402 exchange at
+> all. This section is the proposal as written, kept because our buyer harness still drives it and
+> because the issuer's own 402 responses (below) are real. See question 3.
+
 The issuer never emits this; your proxy does. The harness implements what we propose, so
 `--payment stub-receipt` exercises the whole flow against a stand-in proxy:
 
@@ -144,26 +149,56 @@ so a buyer who read the key document moments before a rotation is not stranded m
 All modes produce identical signatures. Nothing about issuance performance should block you; worst
 case, turn all of it off and you still get correct credentials.
 
+## Breaking change since this runbook was written
+
+**M1.2 replaced `KEY_DOCUMENT_PATH` and `ISSUER_PRIVATE_KEY_PATH` with a single `KEYRING_PATH`**,
+pointing at a keyring that holds every usable epoch and its private key rather than one document
+plus a separate PEM. The old variables are ignored, and a container started with only those fails at
+boot: `unable to read keyring at config/keys/keyring.json`.
+
+That landed one commit after this runbook, and `ghcr.io/anyone-protocol/credentials-issuer:latest`
+moved with it. If you configured against the earlier `compose.published.yml`, pull and you will see
+the boot failure. The current [compose.published.yml](../compose.published.yml) has the right shape;
+`bun run keys:dev` generates the keyring.
+
+**Pin a SHA tag rather than `latest`.** Every push publishes `type=sha` as well, and pinning means an
+upstream change lands when you choose rather than on your next pull. This is on us: the rename
+should have come with a note here, and did not.
+
 ## What we need from you
 
-Ask these once the runtime above makes sense; they are easier to answer having seen it.
+Some of these are answered now that [anytoon](https://github.com/toon-protocol/anytoon) exists.
 
-1. **Is `payment_ref` single-use?** May one `payment_ref` buy more than one bundle? Today nothing
-   stops a captured claim being replayed for another bundle, and each one counts as paid. If refs
-   are one per purchase, we can enforce single-use cheaply, since we already record every one. This
-   is the most important question on the list.
-2. **Should `proxy_sig` bind the request body?** It currently covers the three claim fields only, so
-   a captured claim can be re-pointed at a different set of blanks. Binding a digest of
-   `blinded_blanks` closes that, at the cost of your proxy hashing a payload it otherwise ignores.
-3. **Should the claim carry its own expiry?** There is no timestamp or nonce in it today, so a
-   leaked claim stays valid indefinitely.
-4. **Is `X-Payment` and a `{payer, tx_hash, ...}` receipt the right shape**, and does the `nonce`
-   need signing so you can tell a replayed receipt from a fresh one?
-5. **Decimal string or integer base units for `amount`?** Exact decimals work and are implemented,
-   but base units would be less ambiguous.
-6. **How should we receive and rotate your public key?** It is a mounted file today.
-7. **Confirm the error codes above** read sensibly from your side. `REQUEST_INVALID` and
+1. ~~**Is `payment_ref` single-use?**~~ **Answered: no, and it must not be.** It is the paying
+   channel identity, stable per payer, so that rate limits follow the payer and idempotent retries
+   match ([anytoon ADR 0002](https://github.com/toon-protocol/anytoon/blob/master/docs/adr/0002-payment-reference-is-the-paying-channel-identity.md)).
+   Enforcing single-use would break both. The replay gap is real but has to be closed another way.
+
+2. **Nonce and expiry, or binding to the request body?** Both close the replay gap, and you have
+   proposed the first. A nonce plus expiry, with the issuer recording spent nonces for the window,
+   is the smaller change for you; binding a digest of `blinded_blanks` into `proxy_sig` costs your
+   minter a hash of a payload it otherwise ignores but ties a claim to exactly what it paid for.
+   **Ours to decide, and still open.** See [payment-claim.md](payment-claim.md).
+
+3. ~~**Is `X-Payment` and a `{payer, tx_hash, ...}` receipt the right shape?**~~ **Moot: you do not
+   use the 402 flow.** Payment happens over ILP before the request reaches the issuer, so
+   "Interface 2" below is a proposal nobody implements. It is still what our buyer harness drives
+   (`--payment stub-receipt`), which means the harness cannot drive your stack as-is and the M0.3
+   conformance scenario needs rewording. Tell us if you want the 402 flow kept at all.
+
+4. **Decimal string or integer base units for `amount`?** Still open. Your `connector.toml` prices
+   in base units and signs a decimal, which is exactly the conversion that would disappear if the
+   claim carried base units. Against that, decimals are implemented and working on both sides.
+
+5. ~~**How should we receive and rotate your public key?**~~ **Answered in practice:** a mounted
+   file, same as ours. Worth revisiting only when rotating it matters.
+
+6. **Confirm the error codes** read sensibly from your side. `REQUEST_INVALID` and
    `IDEMPOTENCY_CONFLICT` are ours, not the spec's.
 
-Everything in this document is implemented and testable now, but the format is **not agreed**.
-Changing it is cheap today and expensive once your proxy ships against it.
+7. **Which price wins?** You configure `0.01`; this repo defaults to `1.00`. They must match exactly
+   or every paid request returns `CLAIM_INVALID`. One of us has to move, and it is probably us.
+
+Everything in this document is implemented and testable now. The claim wire format is settled and
+byte-identical on both sides; the rest of it is not agreed, and changing it is cheap today and
+expensive once more is built against it.
