@@ -9,10 +9,12 @@ a chain. Your proxy takes payment and vouches for it; the issuer trusts that vou
 
 ```
 buyer  ->  TOON proxy  ->  issuer
-           402 + price      verifies X-Payment-Claim
-           settles payment  blind-signs k blanks
-           mints the claim
+           collects payment  verifies X-Payment-Claim
+           mints the claim   blind-signs k blanks
 ```
+
+The buyer pays as part of the request. There is no 402 exchange: they came to buy a bundle at a
+price they already know, so there is nothing to discover.
 
 ## Run it
 
@@ -79,38 +81,26 @@ repo pins the vector, so it cannot drift out from under you.
 Verification happens before rate limiting, so a claim we cannot verify never spends a
 `payment_ref`'s budget.
 
-## Interface 2: the 402 you give buyers
+## Interface 2: the 402 pay-and-retry flow, withdrawn
 
-> **Nobody implements this.** [anytoon](https://github.com/toon-protocol/anytoon) collects payment
-> over ILP in the connector, before the request reaches the issuer, so there is no 402 exchange at
-> all. This section is the proposal as written, kept because our buyer harness still drives it and
-> because the issuer's own 402 responses (below) are real. See question 3.
+This runbook originally proposed that the proxy answer an unpaid `POST /v1/bundles` with a `402`
+carrying a price, and that the buyer settle and retry with an `X-Payment` receipt.
 
-The issuer never emits this; your proxy does. The harness implements what we propose, so
-`--payment stub-receipt` exercises the whole flow against a stand-in proxy:
+**That model does not fit what is being sold.** Pay-and-retry is discovery: a caller tries a
+resource, learns it costs money, and decides. A credential buyer is not discovering anything. They
+came to buy a bundle, at a price they already know, and the round trip only adds a rejection before
+the purchase they always intended to make.
 
-```
-POST /v1/bundles        ->  402 Payment Required
-X-Payment: <base64url>  ->  201 with the bundle
-```
+[anytoon](https://github.com/toon-protocol/anytoon) does the right thing instead: payment is
+collected over ILP in the connector, as part of the request, and the issuer sees a paid request or
+no request at all. Nothing needs a 402 exchange.
 
-```json
-{
-  "error": { "code": "PAYMENT_REQUIRED", "message": "pay for this bundle, then retry" },
-  "payment": {
-    "amount": "1.00", "asset": "ANYONE", "chain": "sepolia",
-    "recipient": "0x...", "route_id": "route-1", "nonce": "..."
-  }
-}
-```
+Kept here only because our buyer harness still drives the withdrawn flow (`--payment stub-receipt`),
+which is why it cannot drive a TOON stack. That is ours to clean up.
 
-The buyer settles and retries the identical request with `X-Payment` carrying a base64url receipt
-`{payer, tx_hash, amount, route_id, nonce}`. Your proxy verifies settlement and mints the
-`X-Payment-Claim` above.
-
-The harness retries **at most once**: a proxy that answers 402 to an already-paid request is broken,
-and looping there would mean paying repeatedly. Only `payment.amount` is required; unknown fields
-are passed through untouched, so you can add fields without waiting on a harness release.
+**The issuer's own 402s are a different thing and are real.** They mean "this claim is not good",
+never "here is a price": the issuer has no price to quote and never asks anyone to pay. See the
+error table below.
 
 ## What we return, and what we reject
 
@@ -128,8 +118,8 @@ are passed through untouched, so you can add fields without waiting on a harness
 | `RATE_LIMITED` | 429 | Too many requests for this `payment_ref`. |
 | `WRONG_EPOCH` | 400 | The named epoch is past its grace window, or unknown. |
 
-A `402` carrying a `payment` block is a payment demand. A `402` without one is us rejecting your
-claim — the body says which.
+Every `402` from the issuer is a rejected claim, never a payment demand: it has no price to quote
+and never asks anyone to pay. The body says which rejection.
 
 Blanks are measured and discarded. The issuer never parses, logs or stores blank or signature bytes
 beyond validating count and length, and never sees an unblinded serial.
@@ -180,11 +170,10 @@ Some of these are answered now that [anytoon](https://github.com/toon-protocol/a
    minter a hash of a payload it otherwise ignores but ties a claim to exactly what it paid for.
    **Ours to decide, and still open.** See [payment-claim.md](payment-claim.md).
 
-3. ~~**Is `X-Payment` and a `{payer, tx_hash, ...}` receipt the right shape?**~~ **Moot: you do not
-   use the 402 flow.** Payment happens over ILP before the request reaches the issuer, so
-   "Interface 2" below is a proposal nobody implements. It is still what our buyer harness drives
-   (`--payment stub-receipt`), which means the harness cannot drive your stack as-is and the M0.3
-   conformance scenario needs rewording. Tell us if you want the 402 flow kept at all.
+3. ~~**Is `X-Payment` and a `{payer, tx_hash, ...}` receipt the right shape?**~~ **Withdrawn.**
+   Pay-and-retry is a discovery flow, and nobody buying credentials is discovering a price. Paying
+   as part of the request, as your connector does, is the right shape. Our harness still drives the
+   old flow and needs to catch up; the M0.3 scenario is worded around it too.
 
 4. **Decimal string or integer base units for `amount`?** Still open. Your `connector.toml` prices
    in base units and signs a decimal, which is exactly the conversion that would disappear if the
